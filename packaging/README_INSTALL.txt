@@ -17,6 +17,8 @@ ryujinx_mods/contents/01007ef00011e000/BotwCraft/romfs/WiiXLaunch/mods/botwcraft
 minecraft_mods/skycraft-*.jar
 bridge/host_bridge.py
 bridge/ryujinx_log_relay.py
+bridge/control_bridge.py
+bridge/launcher.py
 START_BRIDGE.bat
 
 BUILD FROM SOURCE
@@ -41,8 +43,7 @@ Only install in a separate test profile, after backing up Ryujinx data.
 Copy ryujinx_mods/contents into the Ryujinx mods/contents directory.
 Install Minecraft 26.3, Fabric Loader 0.19.5+, Fabric API matching 26.3
 and Java 25; copy minecraft_mods/skycraft-*.jar into MC instance mods.
-START_BRIDGE.bat runs only the Windows-side read-only telemetry bridge;
-Minecraft does NOT start automatically, and no game data is invented.
+START_BRIDGE.bat runs the Windows-side host, log relay and keyboard/controller\nbridge together. For controller mode you also need the ViGEmBus driver and\nthe 'vgamepad' Python package, and must select the virtual Xbox 360 pad\nas Ryujinx Player 1. Without these, input can still go to a linked Minecraft\ninstance, but it cannot control BOTW. Minecraft does NOT start automatically.\nThe controller can follow measured Minecraft velocity only if a valid BOTW\nposition feed has first activated Minecraft's SkyCraft shared-memory link.\nThe old version-mismatched BOTW player hook is deliberately disabled, so\nthat feed is unavailable on BOTW Switch 1.0.0 until the hook is reverse-engineered.
 
 UNDO
 ----
