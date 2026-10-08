@@ -15,7 +15,7 @@ def main():
         raise SystemExit("Windows / Ryujinx required")
     processes = []
     try:
-        for name in ("host_bridge.py", "ryujinx_log_relay.py", "control_bridge.py"):
+        for name in ("host_bridge.py", "ryujinx_log_relay.py", "hud_overlay.py", "control_bridge.py"):
             script = ROOT / name
             if not script.is_file():
                 raise FileNotFoundError(f"Missing packaged component: {script}")
@@ -24,6 +24,8 @@ def main():
                 print("[BotwCraft] Starting host bridge...", flush=True)
             elif name == "ryujinx_log_relay.py":
                 print("[BotwCraft] Starting Ryujinx telemetry...", flush=True)
+            elif name == "hud_overlay.py":
+                print("[BotwCraft] Starting experimental transparent Minecraft HUD...", flush=True)
             else:
                 print("[BotwCraft] Starting Windows keyboard / virtual gamepad bridge...", flush=True)
             processes.append((name, subprocess.Popen(cmd, cwd=ROOT)))
@@ -33,6 +35,9 @@ def main():
             for name, proc in processes:
                 result = proc.poll()
                 if result is not None:
+                    if name == "hud_overlay.py":
+                        # The experimental renderer is optional; input/game bridge stays up.
+                        continue
                     raise RuntimeError(f"{name} terminated with code {result}")
             time.sleep(0.35)
     except KeyboardInterrupt:
