@@ -69,7 +69,52 @@ class BridgeTests(unittest.TestCase):
     def test_mc_state_readback(self):
         struct.pack_into("<II3d", self.mem, 0x200, 12, 5, 2.0, 3.0, 4.0)
         self.assertEqual(self.bridge.minecraft_status(),
-                         dict(seq=12, flags=5, x=2.0, y=3.0, z=4.0))
+                         dict(seq=12, flags=5, in_world=True, x=2.0, y=3.0,
+                              z=4.0, yaw=0.0, pitch=0.0, frame=0))
+
+    def test_input_ring_is_skycraft_v11_layout(self):
+        mem = bytearray(0x12000)
+        bridge = host_bridge.Bridge(memory=mem, clock=self.clock)
+        self.assertEqual(bridge.push_inputs([[1, 26, 1, 0, 0], [2, 1, 1, 0, 0]]), 2)
+        self.assertEqual(struct.unpack_from("<Q", mem, 0x1000)[0], 2)
+        self.assertEqual(struct.unpack_from("<HHiii", mem, 0x1080),
+                         (1, 26, 1, 0, 0))
+        self.assertEqual(struct.unpack_from("<HHiii", mem, 0x1090),
+                         (2, 1, 1, 0, 0))
+
+    def test_input_queue_rejects_invalid_and_full(self):
+        mem = bytearray(0x12000)
+        bridge = host_bridge.Bridge(memory=mem, clock=self.clock)
+        for value in ([[1, 26, True, 0, 0]], [[8, 26, 1, 0, 0]],
+                      [[1, 26, 0, 0, 1 << 40]]):
+            with self.assertRaises(ValueError):
+                bridge.push_inputs(value)
+        struct.pack_into("<Q", mem, 0x1000, 4096)
+        with self.assertRaises(ValueError):
+            bridge.push_inputs([[1, 26, 1, 0, 0]])
+
+    def test_input_and_mc_status_round_trip(self):
+        mem = bytearray(0x12000)
+        bridge = host_bridge.Bridge(memory=mem, clock=self.clock)
+        struct.pack_into("<II3d2f", mem, 0x200, 4, 1, 10., 20., 30., 45., 10.)
+        with host_bridge.Server(("127.0.0.1", 0), host_bridge.Client) as server:
+            server.bridge = bridge
+            worker = threading.Thread(target=server.serve_forever, daemon=True)
+            worker.start()
+            try:
+                with socket.create_connection(server.server_address, timeout=2) as sock:
+                    inp = dict(type="input", events=[[1, 26, 1, 0, 0]])
+                    sock.sendall((json.dumps(inp) + "\n").encode())
+                    response = json.loads(sock.makefile("rb").readline())
+                    self.assertEqual(response, {"ok": True, "queued": 1})
+                with socket.create_connection(server.server_address, timeout=2) as sock:
+                    sock.sendall(b'{"type":"minecraft"}\n')
+                    response = json.loads(sock.makefile("rb").readline())
+                    self.assertEqual(response["minecraft"]["x"], 10.0)
+                    self.assertEqual(response["minecraft"]["yaw"], 45.0)
+            finally:
+                server.shutdown()
+                worker.join(3)
 
     def test_loopback_transport(self):
         with host_bridge.Server(("127.0.0.1", 0), host_bridge.Client) as server:
