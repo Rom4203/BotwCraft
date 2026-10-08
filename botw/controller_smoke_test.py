@@ -24,6 +24,7 @@ class PadState:
     jump: bool = False
     sprint: bool = False
     crouch: bool = False
+    interact: bool = False
 
 def mapped_state(pressed: set[str]) -> PadState:
     x = float(("D" in pressed) - ("A" in pressed))
@@ -32,7 +33,7 @@ def mapped_state(pressed: set[str]) -> PadState:
         x *= 0.7071067811865476
         y *= 0.7071067811865476
     return PadState(x, y, "SPACE" in pressed, "SHIFT" in pressed,
-                    "CTRL" in pressed)
+                    "CTRL" in pressed, "E" in pressed)
 
 def get_keys() -> set[str]:
     api = ctypes.windll.user32
@@ -42,9 +43,10 @@ def get_keys() -> set[str]:
 def apply_state(pad, vg, state: PadState):
     pad.left_joystick_float(x_value_float=state.x, y_value_float=state.y)
     for pressed, button in (
-        (state.jump, vg.XUSB_BUTTON.XUSB_GAMEPAD_A),
+        (state.jump, vg.XUSB_BUTTON.XUSB_GAMEPAD_X),
         (state.sprint, vg.XUSB_BUTTON.XUSB_GAMEPAD_B),
-        (state.crouch, vg.XUSB_BUTTON.XUSB_GAMEPAD_LEFT_THUMB)):
+        (state.crouch, vg.XUSB_BUTTON.XUSB_GAMEPAD_LEFT_THUMB),
+        (state.interact, vg.XUSB_BUTTON.XUSB_GAMEPAD_A)):
         if pressed:
             pad.press_button(button=button)
         else:
@@ -64,9 +66,9 @@ def run() -> int:
         return 2
     print("Virtual Xbox 360 controller created.")
     print("In Ryujinx map Player 1 to this controller (Pro Controller layout).")
-    print("WASD = left stick, SPACE = A, SHIFT = B, CTRL = left-stick click.")
+    print("WASD = left stick, SPACE = X (jump), SHIFT = B (run), CTRL = stick click, E = A (interact).")
     print("Focus Ryujinx to play. Press ESC to exit the controller test.")
-    print("WARNING: ESP / menus may map buttons differently depending on your Ryujinx profile.")
+    print("WARNING: BOTW menus may map buttons differently depending on your Ryujinx profile.")
     try:
         while True:
             keys = get_keys()
