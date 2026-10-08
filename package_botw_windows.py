@@ -41,6 +41,8 @@ def archive_manifest(root):
         "minecraft_mods/" + find_minecraft_jar(root).name: find_minecraft_jar(root),
         "bridge/host_bridge.py": root / "botw" / "host_bridge.py",
         "bridge/ryujinx_log_relay.py": root / "botw" / "ryujinx_log_relay.py",
+        "bridge/control_bridge.py": root / "botw" / "control_bridge.py",
+        "bridge/launcher.py": root / "botw" / "launcher.py",
         "START_BRIDGE.bat": root / "packaging" / "START_BRIDGE.bat",
         "README_INSTALL.txt": root / "packaging" / "README_INSTALL.txt",
         "THIRD-PARTY-NOTICES.md": root / "THIRD-PARTY-NOTICES.md",
