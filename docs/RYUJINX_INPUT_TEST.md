@@ -19,7 +19,7 @@ ROMs or game keys are provided. It does not modify your game or save.
 5. Start your personal BOTW installation in Ryujinx, and from a separate
    PowerShell window run:
    `py botw/controller_smoke_test.py`
-6. Switch focus back to the game. Use WASD to move, Space to press gamepad A,
+6. Switch focus back to the game. Use WASD to move, Space to press gamepad X (jump), E to press A (interact),
    Shift to press B, Ctrl to click the left stick. Press Esc to exit the test.
 
 **Important:** BOTW's Switch action mappings depend on your game profile.
