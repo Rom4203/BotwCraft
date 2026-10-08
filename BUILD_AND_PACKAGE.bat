@@ -24,6 +24,21 @@ echo Installing source guard: unverified Switch player tick will NOT be hooked.
 if errorlevel 1 (echo Hook guard failed; refusing to compile & pause & exit /b 1)
 call "build_botw_windows.bat" --no-pause
 if errorlevel 1 (echo Build failed: package not created & pause & exit /b 1)
+echo Building Minecraft Fabric mod from the SkyCraft-based source...
+if not exist "fabric\\gradlew.bat" (
+ echo [ERROR] Minecraft Gradle wrapper missing.
+ pause
+ exit /b 1
+)
+pushd "fabric"
+call gradlew.bat --no-daemon remapJar
+set "MC_RC=%ERRORLEVEL%"
+popd
+if not "%MC_RC%"=="0" (
+ echo [ERROR] Minecraft Fabric build failed. Java 25 and a network connection are required.
+ pause
+ exit /b 1
+)
 "%PY%" "package_botw_windows.py"
 if errorlevel 1 (echo Packaging failed & pause & exit /b 1)
 echo.
