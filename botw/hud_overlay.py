@@ -138,6 +138,12 @@ class OverlayWindow:
         g.CreateDIBSection.restype = hwnd
         g.SelectObject.argtypes = (hwnd, hwnd)
         g.SelectObject.restype = hwnd
+        g.DeleteObject.argtypes = (hwnd,)
+        g.DeleteObject.restype = wintypes.BOOL
+        g.DeleteDC.argtypes = (hwnd,)
+        g.DeleteDC.restype = wintypes.BOOL
+        u.ShowWindow.argtypes = (hwnd, ctypes.c_int)
+        u.DestroyWindow.argtypes = (hwnd,)
         g.StretchBlt.argtypes = (hwnd, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
                                 hwnd, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, wintypes.DWORD)
         self.hwnd = u.CreateWindowExW(
@@ -194,12 +200,14 @@ class OverlayWindow:
         x, y, output_w, output_h = location
         w, h, bottom_up, _, pixels = frame
         if self.src_size != (w, h):
-            if self.src_bitmap: self.g.DeleteObject(self.src_bitmap)
+            old_bitmap = self.src_bitmap
             self.src_bitmap, self.src_bits = self.new_dib(self.src_dc, w, h)
+            if old_bitmap: self.g.DeleteObject(old_bitmap)
             self.src_size = (w, h)
         if self.dst_size != (output_w, output_h):
-            if self.dst_bitmap: self.g.DeleteObject(self.dst_bitmap)
+            old_bitmap = self.dst_bitmap
             self.dst_bitmap, self.dst_bits = self.new_dib(self.dst_dc, output_w, output_h)
+            if old_bitmap: self.g.DeleteObject(old_bitmap)
             self.dst_size = (output_w, output_h)
         # Minecraft's RGBA framebuffer -> Win32 layered-window BGRA.
         converted = bytearray(pixels)
