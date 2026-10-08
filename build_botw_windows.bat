@@ -20,6 +20,13 @@ if not exist "%PY%" (
  echo [ERROR] Python not found at "%PY%"
  goto :failed
 )
+rem Enforce source safety even if this helper is run without BUILD_AND_PACKAGE.bat.
+if not exist "%ROOT%botw\guard_switch_player_hook.py" (
+ echo [ERROR] Missing Switch hook safety guard.
+ goto :failed
+)
+"%PY%" "%ROOT%botw\guard_switch_player_hook.py"
+if errorlevel 1 goto :failed
 rem WiiXLaunch uses bare "python" when generating its configuration.
 rem Prepend the installed Python directory to PATH, bypassing Windows Store aliases.
 set "PATH=D:\Program Files\Python;%PATH%"
