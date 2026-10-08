@@ -8,7 +8,7 @@ import shutil
 import sys
 
 ROOT = Path(__file__).resolve().parent.parent
-PLAYER = ROOT / "WiiXLaunch" / "wiixlaunch-botw" / "include" / "wiixlaunch" / "botw" / "game" / "player.hpp"
+PLAYER = ROOT / "WiiXLaunch" / "vendor" / "wiixlaunch-botw" / "include" / "wiixlaunch" / "botw" / "game" / "player.hpp"
 OLD = "        impl::PlayerTickHook::Install(0x873374, 0x02d67cf4);"
 NEW = """#if !WIIXL_SWITCH
         impl::PlayerTickHook::Install(0x873374, 0x02d67cf4);
