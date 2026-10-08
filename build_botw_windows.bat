@@ -20,6 +20,13 @@ if not exist "%PY%" (
  echo [ERROR] Python not found at "%PY%"
  goto :failed
 )
+rem WiiXLaunch uses bare "python" when generating its configuration.
+rem Prepend the installed Python directory to PATH, bypassing Windows Store aliases.
+set "PATH=D:\Program Files\Python;%PATH%"
+echo [INFO] Python for host build:
+where python
+python --version
+if errorlevel 1 goto :failed
 if exist "%ROOT%mod\botw\guest_mod\mod.json" (
  set "GUEST=%ROOT%mod\botw\guest_mod"
 ) else (
