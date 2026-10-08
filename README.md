@@ -1,3 +1,27 @@
+# BotwCraft — Breath of the Wild × Minecraft (work in progress)
+
+**Target:** BOTW Switch v1.0.0 in Ryujinx, with Minecraft Java/Fabric acting as the gameplay layer as in [SkyCraft](https://github.com/chasmlol/SkyCraft).
+
+> **Status: NOT PLAYABLE.** The project currently compiles the WiiXLaunch host and guest, builds a Fabric mod, and packages a Windows telemetry relay. There is no verified BOTW v1.0.0 player movement hook, native return transport, collision export, or block renderer. Do not assume a successful build means gameplay works. Back up your Zelda saves before testing.
+
+## Windows development build
+
+1. Download this branch's source archive and extract it.
+2. Install JDK 25, Python, Git, and devkitPro/devkitA64. The current script expects the owner's tool locations on drive D: (see `BUILD_AND_PACKAGE.bat`).
+3. Run `BUILD_AND_PACKAGE.bat` once. It downloads WiiXLaunch if needed, applies a guard against an incompatible BOTW Switch player hook, builds both game-side components and packages them.
+4. The result is `dist/BotwCraft-experimental.zip`. It includes the native BOTW host/guest modules, the Minecraft Fabric JAR and a Windows launcher for the read-only bridge.
+5. **Do not install as a playable release.** The native movement, block renderer and real BOTW/Minecraft sync remain to be implemented.
+
+Read [the prototype design](docs/BOTW_PROTOTYPE.md), [BOTW API status](docs/BOTW_MOD_API.md) and [the local bridge protocol](docs/HOST_BRIDGE.md).
+
+## Upstream attribution
+
+The Minecraft/Fabric and protocol code derives from **[SkyCraft by chasmlol](https://github.com/chasmlol/SkyCraft)** under the MIT license. This project is not affiliated with Nintendo, Mojang or Microsoft and does not provide game assets, firmware or keys.
+
+---
+
+## Upstream SkyCraft documentation (Skyrim version)
+
 # SkyCraft
 
 ![SkyCraft: a Minecraft player walking through Riverwood with the Minecraft HUD](docs/screenshot.jpg)
