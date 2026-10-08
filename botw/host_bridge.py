@@ -27,6 +27,13 @@ OVERLAY_SLOT_BYTES = 3840 * 2160 * 4
 OFF_RENDER_RING = OFF_OVERLAY_PIXELS + 3 * OVERLAY_SLOT_BYTES
 MAPPING_BYTES = OFF_RENDER_RING + (64 << 20)
 MAX_MESSAGE = 4096
+OFF_INPUT_RING = 0x1000
+IR_HEAD = 0x00
+IR_TAIL = 0x40
+IR_DATA = 0x80
+INPUT_RING_ENTRIES = 4096
+INPUT_EVENT = struct.Struct("<HHiii")  # exact SkyCraft v11 InputEvent, 16 bytes
+MC_IN_WORLD = 1
 STATE_PACK = struct.Struct("<III3d2fIIIf")  # SkyState beyond seq = 60 bytes
 assert STATE_PACK.size == 60
 assert struct.calcsize("<IIIIQQ") == 0x20
@@ -93,10 +100,47 @@ class Bridge:
                     continue
                 flags = struct.unpack_from("<I", self.mapping, OFF_MC_STATE + 4)[0]
                 xyz = struct.unpack_from("<3d", self.mapping, OFF_MC_STATE + 8)
+                yaw, pitch = struct.unpack_from("<2f", self.mapping, OFF_MC_STATE + 0x20)
+                frame = struct.unpack_from("<Q", self.mapping, OFF_MC_STATE + 0x38)[0]
                 second = struct.unpack_from("<I", self.mapping, OFF_MC_STATE)[0]
                 if first == second:
-                    return dict(seq=second, flags=flags, x=xyz[0], y=xyz[1], z=xyz[2])
+                    return dict(seq=second, flags=flags, in_world=bool(flags & MC_IN_WORLD),
+                                x=xyz[0], y=xyz[1], z=xyz[2], yaw=yaw, pitch=pitch,
+                                frame=frame)
             return dict(error="Minecraft state was being updated")
+
+    def push_inputs(self, events):
+        """Push input events into the exact SkyCraft v11 16-byte input ring.
+
+        Events are sequences [kind, SDL_scancode_or_button, a, b, c].
+        The Java consumer owns IR_TAIL; this producer publishes IR_HEAD last.
+        """
+        if not isinstance(events, list) or len(events) > 64:
+            raise ValueError("events must be a list of at most 64 events")
+        if len(self.mapping) < OFF_INPUT_RING + IR_DATA + INPUT_RING_ENTRIES * INPUT_EVENT.size:
+            raise ValueError("mapping too short for input ring")
+        validated = []
+        for event in events:
+            if (not isinstance(event, (list, tuple)) or len(event) != 5 or
+                any(type(value) is not int for value in event)):
+                raise ValueError("each input event must have five integers")
+            kind, code, a, b, c = event
+            if not (1 <= kind <= 6 and 0 <= code <= 65535 and
+                    all(-(2 ** 31) <= v < 2 ** 31 for v in (a, b, c))):
+                raise ValueError("invalid SkyCraft input event")
+            validated.append(event)
+        with self.lock:
+            head = struct.unpack_from("<Q", self.mapping, OFF_INPUT_RING + IR_HEAD)[0]
+            tail = struct.unpack_from("<Q", self.mapping, OFF_INPUT_RING + IR_TAIL)[0]
+            # Never overwrite unread input: drop instead of losing key-up state.
+            if tail > head or head - tail + len(validated) > INPUT_RING_ENTRIES:
+                raise ValueError("SkyCraft input ring full or inconsistent")
+            for event in validated:
+                offset = OFF_INPUT_RING + IR_DATA + (head & (INPUT_RING_ENTRIES - 1)) * INPUT_EVENT.size
+                INPUT_EVENT.pack_into(self.mapping, offset, *event)
+                head += 1
+            struct.pack_into("<Q", self.mapping, OFF_INPUT_RING + IR_HEAD, head)
+            return len(validated)
 
     def heartbeat(self):
         with self.lock:
@@ -124,8 +168,19 @@ class Client(socketserver.StreamRequestHandler):
                 break
             try:
                 data = json.loads(raw)
-                self.server.bridge.update(data)
-                reply = {"ok": True, "minecraft": self.server.bridge.minecraft_status()}
+                if not isinstance(data, dict):
+                    raise ValueError("expected JSON object")
+                kind = data.get("type")
+                if kind == "pose":
+                    self.server.bridge.update(data)
+                    reply = {"ok": True, "minecraft": self.server.bridge.minecraft_status()}
+                elif kind == "input":
+                    count = self.server.bridge.push_inputs(data.get("events"))
+                    reply = {"ok": True, "queued": count}
+                elif kind == "minecraft":
+                    reply = {"ok": True, "minecraft": self.server.bridge.minecraft_status()}
+                else:
+                    raise ValueError("unknown bridge message type")
             except (TypeError, ValueError, json.JSONDecodeError) as exc:
                 reply = {"error": str(exc)}
             self.wfile.write((json.dumps(reply) + "\n").encode("utf-8"))
