@@ -116,7 +116,7 @@ class VirtualController:
             import vgamepad as vg
             self.vg = vg
             self.pad = vg.VX360Gamepad()
-        except (ImportError, OSError) as exc:
+        except Exception as exc:
             raise RuntimeError("vgamepad and ViGEmBus are required for the BOTW controller") from exc
 
     def write(self, state):
@@ -143,6 +143,11 @@ class WinKeys:
     def __init__(self):
         self.api = ctypes.windll.user32
         self.api.GetForegroundWindow.restype = ctypes.c_void_p
+        # All HWND arguments must be pointer-sized on 64-bit Windows.
+        self.api.GetWindowTextW.argtypes = (ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_int)
+        self.api.GetWindowTextW.restype = ctypes.c_int
+        self.api.GetAsyncKeyState.argtypes = (ctypes.c_int,)
+        self.api.GetAsyncKeyState.restype = ctypes.c_short
 
     def ryujinx_focused(self):
         handle = self.api.GetForegroundWindow()
@@ -191,7 +196,10 @@ def run(port=39847, controller=True):
                     pass
             now = time.monotonic()
             state = raw_gamepad(current)
-            if status and (status.get("flags", 0) & MC_IN_WORLD) and last_mc:
+            if status and (status.get("flags", 0) & MC_SCREEN_OPEN):
+                # Never walk Link while Minecraft owns its inventory/chat UI.
+                state = GamepadState()
+            elif status and (status.get("flags", 0) & MC_IN_WORLD) and last_mc:
                 derived = mc_gamepad(last_mc, status, now - last_mc_time)
                 if derived is not None:
                     # Explicit Minecraft physics mode when updates are flowing.
