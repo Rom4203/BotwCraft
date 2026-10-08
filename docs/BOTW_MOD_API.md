@@ -13,7 +13,7 @@ WiiXLaunch targets Switch/AArch64 executable mods using ExLaunch, and has a
 dedicated BOTW module. Unlike sending virtual controller input to Ryujinx,
 game hooks can potentially read/apply Link's world-space state directly.
 
-This is **not** a ready-made BOTW player movement API. The framework supplies
+**Verified critical blocker (2026-10-08):** the public WiiXLaunch-BotW platform table explicitly lists `Player::SupportsPosition` as FALSE on Switch (and TRUE on Wii U/Cemu). It also lists Switch `Camera` position/look-at/up accessors as supported. Therefore this project cannot simply call `Player::GetPosition()` on Switch. A Switch-specific, version-verified player pose reader and write hook must be reverse engineered first. See https://github.com/BladesawStudios/wiixlaunch-botw .\n\nThis is **not** a ready-made BOTW player movement API. The framework supplies
 hooking/patching infrastructure; appropriate player and camera symbols and
 their version-specific addresses must be verified before use.
 
