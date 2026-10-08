@@ -52,8 +52,9 @@ echo Guest: "%GUEST%\build\switch-mods\botwcraft.wxlm"
 echo [NOTE] This does not demonstrate a working player hook or Minecraft linkage.
 goto :end
 :failed
+set "BUILD_FAILED=1"
 echo.
 echo Build stopped; Ryujinx remains unchanged.
 :end
-if /i "%~1"=="--no-pause" exit /b 0
-pause
+if /i not "%~1"=="--no-pause" pause
+if defined BUILD_FAILED (exit /b 1) else (exit /b 0)
