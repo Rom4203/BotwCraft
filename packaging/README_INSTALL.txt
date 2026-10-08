@@ -1,27 +1,57 @@
-BOTWCRAFT EXPERIMENTAL BUILD - BOTW SWITCH 1.0.0
-=================================================
+BOTWCRAFT - EXPERIMENTAL DEVELOPMENT PACKAGE
+=============================================
 
-STATUS: NOT PLAYABLE YET. This is the current prototype, not Minecraft inside BOTW.
-Do not install on your only Ryujinx profile; hooks may crash BOTW.
+GAME: The Legend of Zelda: Breath of the Wild Switch 1.0.0
+ARCHITECTURE: WiiXLaunch (Switch), Fabric Minecraft (Java 25), Windows bridge
+SOURCE: https://github.com/Rom4203/BotwCraft/tree/botw-ryujinx-development
 
-Included:
-- WiiXLaunch subsdk9, built from local sources
-- BotwCraft guest .wxlm
-- Windows bridge and log relay
+HONEST STATUS: NOT YET PLAYABLE AS MINECRAFT INSIDE BOTW.
+This package can compile and contains both game mods plus the bridge, but
+Minecraft->Link control, collision streaming, native blocks and rendering are
+not yet connected to the game. Never mistake "build succeeded" for "game works".
 
-INSTALL (ONLY AFTER THE PLAYER HOOK HAS BEEN VERIFIED FOR BOTW 1.0.0):
-1. Back up your BOTW saves and Ryujinx data.
-2. Copy the folder under ryujinx_mods/contents into
-   %APPDATA%\Ryujinx\mods\contents, merging by title ID.
-3. Start Ryujinx and BOTW.
-4. Run START_BRIDGE.bat.
+CONTENTS
+--------
+ryujinx_mods/contents/01007ef00011e000/BotwCraft/exefs/subsdk9
+ryujinx_mods/contents/01007ef00011e000/BotwCraft/romfs/WiiXLaunch/mods/botwcraft.wxlm
+minecraft_mods/skycraft-*.jar
+bridge/host_bridge.py
+bridge/ryujinx_log_relay.py
+START_BRIDGE.bat
 
-IMPORTANT: This package does not implement Minecraft-driven Link movement,
-collision transfer or drawing Minecraft blocks inside BOTW. The currently
-unverified hook is intentionally blocked by the source guard.
+BUILD FROM SOURCE
+-----------------
+Extract the source ZIP, run BUILD_AND_PACKAGE.bat.
+Prerequisites:
+- Git (auto-downloads WiiXLaunch source and submodules if absent)
+- devkitPro/devkitA64 in D:\Bordel\Code\gameboy\devkit\devkitPro
+- Python in D:\Program Files\Python\python.exe
+- JDK 25 on PATH or JAVA_HOME
+- Internet for Gradle/Fabric/Minecraft build dependencies
+Compiled ZIP appears at dist\BotwCraft-experimental.zip.
 
-TO UNINSTALL:
-Close Ryujinx, then MOVE the BotwCraft folder outside Ryujinx's mod search
-directories (merely renaming the folder still loads the mod).
+PLAYTEST SAFETY
+---------------
+Ryujinx v1.3.3 was previously observed crashing with an unverified BOTW
+player hook at relative address 0x873374. The build applies a source
+guard against that hook. This is NOT a verified compatible game implementation.
+Do not use your only Zelda saves or expect working Minecraft gameplay.
 
-No Nintendo assets, keys, firmware or game saves are included.
+Only install in a separate test profile, after backing up Ryujinx data.
+Copy ryujinx_mods/contents into the Ryujinx mods/contents directory.
+Install Minecraft 26.3, Fabric Loader 0.19.5+, Fabric API matching 26.3
+and Java 25; copy minecraft_mods/skycraft-*.jar into MC instance mods.
+START_BRIDGE.bat runs only the Windows-side read-only telemetry bridge;
+Minecraft does NOT start automatically, and no game data is invented.
+
+UNDO
+----
+Close Ryujinx and MOVE the BotwCraft folder out of ALL Ryujinx mod paths.
+Renaming BotwCraft_DESACTIVE does not disable it if still inside mods/contents.
+Restore your earlier known-good copy and saves if needed.
+
+THIRD PARTY
+-----------
+SkyCraft is by chasmlol (MIT); WiiXLaunch and other upstream components have
+their own licenses. This package does not distribute Nintendo keys, firmware,
+the XCI or decrypted Zelda binaries.
