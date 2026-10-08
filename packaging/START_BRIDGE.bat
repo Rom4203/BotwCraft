@@ -3,17 +3,17 @@ setlocal EnableExtensions
 cd /d "%~dp0"
 set "PY=D:\Program Files\Python\python.exe"
 if not exist "%PY%" (
-  echo Python was not found in D:\Program Files\Python.
+  echo [ERROR] Missing Python: "%PY%"
   pause
   exit /b 1
 )
-if not exist "bridge\host_bridge.py" (
-  echo The package is incomplete.
+if not exist "bridge\launcher.py" (
+  echo [ERROR] Missing bridge/launcher.py; package incomplete.
   pause
   exit /b 1
 )
-start "BotwCraft host bridge" "%PY%" "bridge\host_bridge.py"
-echo The bridge is running in another window. Close it after playing.
-echo This is telemetry-only. It does not control BOTW or render Minecraft blocks.
-"%PY%" "bridge\ryujinx_log_relay.py"
+echo Starting BotwCraft Windows input and telemetry bridge.
+echo Ryujinx Player 1 needs the virtual X360 controller ^(vgamepad + ViGEmBus^).
+echo IMPORTANT: native BOTW/Minecraft gameplay integration is unfinished.
+"%PY%" "bridge\launcher.py"
 pause
