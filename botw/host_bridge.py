@@ -1,12 +1,15 @@
-"""BotwCraft Windows host bridge: SkyCraft-compatible memory owner.
+"""BOTW -> Minecraft SkyCraft v11 shared-memory bridge.
 
-Transport: newline-delimited JSON over localhost TCP for a future Ryujinx
-guest mod/host adapter. Does not know BOTW guest memory addresses.
-Python 3.10+, Windows only. No keyboard/gamepad injection.
+Accepts measured game poses over localhost. No synthetic gameplay state and no
+guest pointer reads. The bridge also reads the Minecraft -> game state, but a
+game-side receiver is still required to apply movement in BOTW.
 """
 import argparse
+import ctypes
 import json
+import math
 import mmap
+import os
 import socketserver
 import struct
 import sys
@@ -16,71 +19,97 @@ import time
 MAGIC = 0x43594B53
 VERSION = 11
 NAME = "Local\\SkyCraft_v1"
-COLLISION_RING = 0x20000
-OVERLAY_PIXELS = COLLISION_RING + (32 << 20)
-OVERLAY_SLOT_BYTES = 3840 * 2160 * 4
-RENDER_RING = OVERLAY_PIXELS + 3 * OVERLAY_SLOT_BYTES
-MAPPING_BYTES = RENDER_RING + (64 << 20)
-OFF_HOST_STATE = 0x100
+OFF_SKY_STATE = 0x100
 OFF_MC_STATE = 0x200
+OFF_COLLISION_RING = 0x20000
+OFF_OVERLAY_PIXELS = OFF_COLLISION_RING + (32 << 20)
+OVERLAY_SLOT_BYTES = 3840 * 2160 * 4
+OFF_RENDER_RING = OFF_OVERLAY_PIXELS + 3 * OVERLAY_SLOT_BYTES
+MAPPING_BYTES = OFF_RENDER_RING + (64 << 20)
 MAX_MESSAGE = 4096
+STATE_PACK = struct.Struct("<III3d2fIIIf")  # SkyState beyond seq = 60 bytes
+assert STATE_PACK.size == 60
+assert struct.calcsize("<IIIIQQ") == 0x20
+
+def uptime_ms():
+    """Same clock as SkyCraft Fabric's GetTickCount64() heartbeat."""
+    if sys.platform == "win32":
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.GetTickCount64.restype = ctypes.c_ulonglong
+        return kernel32.GetTickCount64()
+    return int(time.monotonic() * 1000)  # portable unit tests only
+
+def _real(value):
+    return type(value) in (float, int) and math.isfinite(value) and abs(value) < 1e6
 
 class Bridge:
-    def __init__(self, mapping_name=NAME):
-        self.mapping = mmap.mmap(-1, MAPPING_BYTES, tagname=mapping_name,
-                                 access=mmap.ACCESS_WRITE)
-        self.lock = threading.Lock()
+    def __init__(self, mapping_name=NAME, memory=None, clock=uptime_ms):
+        if memory is None:
+            if sys.platform != "win32":
+                raise OSError("Windows named mappings are required")
+            memory = mmap.mmap(-1, MAPPING_BYTES, tagname=mapping_name, access=mmap.ACCESS_WRITE)
+        if len(memory) < OFF_MC_STATE + 0x100:
+            raise ValueError("memory mapping too short")
+        self.mapping = memory
+        self.clock = clock
+        self.lock = threading.RLock()
         self.seq = 0
-        self.last_packet = 0.0
-        self.frame = 0
-        # This mapping has the same binary offsets as the SkyCraft v11 protocol.
-        # Fabric currently expects the Skyrim host heartbeat in this header.
-        struct.pack_into("<IIIIQQ", self.mapping, 0, MAGIC, VERSION, 0, 0, 0, 0)
-        self.mapping[OFF_HOST_STATE:OFF_HOST_STATE + 0x40] = bytes(0x40)
+        self.last_packet = None
+        self.last_world = None
+        self.teleport_seq = 0
+        struct.pack_into("<IIIIQQ", memory, 0, MAGIC, VERSION, os.getpid(), 0, 0, 0)
+        memory[OFF_SKY_STATE:OFF_SKY_STATE + 0x40] = bytes(0x40)
 
     def update(self, data):
         if not isinstance(data, dict) or data.get("type") != "pose":
             raise ValueError("expected pose object")
-        for k in ("x", "y", "z", "yaw", "pitch"):
-            if not isinstance(data.get(k), (int, float)):
-                raise ValueError("missing numeric field " + k)
-        import math
-        if not all(math.isfinite(data[k]) for k in ("x","y","z","yaw","pitch")):
-            raise ValueError("nonfinite coordinate")
-        if not isinstance(data.get("world", 1), int):
-            raise ValueError("world must be integer")
+        if not all(_real(data.get(k)) for k in ("x", "y", "z", "yaw", "pitch")):
+            raise ValueError("pose requires finite numeric x/y/z/yaw/pitch")
+        world = data.get("world", 1)
+        if type(world) is not int or not (0 <= world <= 0xFFFFFFFF):
+            raise ValueError("world must be an unsigned 32-bit integer")
         with self.lock:
+            if world != self.last_world:
+                self.teleport_seq = (self.teleport_seq + 1) & 0xFFFFFFFF
+                self.last_world = world
             self.seq += 2
-            # SkyState seqlock: odd while writing, then stable even.
-            struct.pack_into("<I", self.mapping, OFF_HOST_STATE, self.seq - 1)
-            # flags, worldId, collisionEpoch, pos XYZ, yaw, pitch,
-            # teleportSeq, viewportW/H, gameHour.
-            struct.pack_into("<III3d2fIIIf", self.mapping,
-                             OFF_HOST_STATE + 4,
-                             1, data.get("world", 1) & 0xffffffff, 0,
-                             float(data["x"]), float(data["y"]), float(data["z"]),
-                             float(data["yaw"]), float(data["pitch"]),
-                             0, 1280, 720, 12.0)
-            struct.pack_into("<I", self.mapping, OFF_HOST_STATE, self.seq)
-            self.last_packet = time.monotonic()
+            struct.pack_into("<I", self.mapping, OFF_SKY_STATE, self.seq - 1)
+            STATE_PACK.pack_into(
+                self.mapping, OFF_SKY_STATE + 4,
+                1, world, self.teleport_seq,  # in-game flag, world, collision epoch
+                float(data["x"]), float(data["y"]), float(data["z"]),
+                float(data["yaw"]), float(data["pitch"]),
+                self.teleport_seq, 1280, 720, 12.0,
+            )
+            struct.pack_into("<I", self.mapping, OFF_SKY_STATE, self.seq)
+            self.last_packet = self.clock()
+            struct.pack_into("<Q", self.mapping, 16, self.last_packet)
 
     def minecraft_status(self):
         with self.lock:
-            try:
-                seq, flags = struct.unpack_from("<II", self.mapping, OFF_MC_STATE)
-                x, y, z = struct.unpack_from("<3d", self.mapping, OFF_MC_STATE + 8)
-                return dict(seq=seq, flags=flags, x=x, y=y, z=z)
-            except (ValueError, struct.error):
-                return dict(error="invalid Minecraft state")
+            for _ in range(4):
+                first = struct.unpack_from("<I", self.mapping, OFF_MC_STATE)[0]
+                if first & 1:
+                    continue
+                flags = struct.unpack_from("<I", self.mapping, OFF_MC_STATE + 4)[0]
+                xyz = struct.unpack_from("<3d", self.mapping, OFF_MC_STATE + 8)
+                second = struct.unpack_from("<I", self.mapping, OFF_MC_STATE)[0]
+                if first == second:
+                    return dict(seq=second, flags=flags, x=xyz[0], y=xyz[1], z=xyz[2])
+            return dict(error="Minecraft state was being updated")
 
     def heartbeat(self):
-        # No false in-game flag: stale guest feed marks host inactive.
         with self.lock:
-            alive = time.monotonic() - self.last_packet < 1.0
-            flags = 1 if alive else 0
-            struct.pack_into("<I", self.mapping, OFF_HOST_STATE + 4, flags)
-            struct.pack_into("<Q", self.mapping, 16, int(time.monotonic()*1000))
+            now = self.clock()
+            alive = self.last_packet is not None and 0 <= now - self.last_packet < 1000
+            # Do NOT signal a live game when there is no fresh valid game pose.
+            struct.pack_into("<Q", self.mapping, 16, now if alive else 0)
+            struct.pack_into("<I", self.mapping, OFF_SKY_STATE + 4, 1 if alive else 0)
             return alive
+
+    def close(self):
+        if hasattr(self.mapping, "close"):
+            self.mapping.close()
 
 class Client(socketserver.StreamRequestHandler):
     def handle(self):
@@ -89,44 +118,45 @@ class Client(socketserver.StreamRequestHandler):
         while True:
             raw = self.rfile.readline(MAX_MESSAGE + 1)
             if not raw:
-                return
+                break
             if len(raw) > MAX_MESSAGE or not raw.endswith(b"\n"):
-                self.wfile.write(b'{"error":"oversized message"}\n')
-                return
+                self.wfile.write(b'{"error":"invalid message size"}\n')
+                break
             try:
-                value = json.loads(raw)
-                self.server.bridge.update(value)
+                data = json.loads(raw)
+                self.server.bridge.update(data)
                 reply = {"ok": True, "minecraft": self.server.bridge.minecraft_status()}
-            except (ValueError, UnicodeDecodeError, json.JSONDecodeError) as e:
-                reply = {"error": str(e)}
-            self.wfile.write((json.dumps(reply) + "\n").encode())
+            except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                reply = {"error": str(exc)}
+            self.wfile.write((json.dumps(reply) + "\n").encode("utf-8"))
 
 class Server(socketserver.ThreadingTCPServer):
     allow_reuse_address = True
     daemon_threads = True
 
 def main():
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=39847)
     parser.add_argument("--mapping", default=NAME)
     args = parser.parse_args()
     if sys.platform != "win32":
-        raise SystemExit("This host bridge requires Windows named mappings")
-    bridge = Bridge(args.mapping)
-    with Server(("127.0.0.1", args.port), Client) as server:
-        server.bridge = bridge
-        threading.Thread(target=server.serve_forever, daemon=True).start()
-        print(f"BotwCraft host bridge running on 127.0.0.1:{args.port}; Ctrl+C to quit")
-        print("Waiting for a real BOTW guest adapter. No game state is faked.")
-        try:
-            while True:
-                bridge.heartbeat()
-                time.sleep(.05)
-        except KeyboardInterrupt:
-            pass
-        finally:
-            server.shutdown()
-            bridge.mapping.close()
+        raise SystemExit("Run the bridge on Windows (Ryujinx PC)")
+    bridge = Bridge(mapping_name=args.mapping)
+    try:
+        with Server(("127.0.0.1", args.port), Client) as server:
+            server.bridge = bridge
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+            print(f"[BotwCraft] Bridge ready on 127.0.0.1:{args.port}; Ctrl+C to quit", flush=True)
+            try:
+                while True:
+                    bridge.heartbeat()
+                    time.sleep(0.05)
+            except KeyboardInterrupt:
+                pass
+            finally:
+                server.shutdown()
+    finally:
+        bridge.close()
 
 if __name__ == "__main__":
     main()
