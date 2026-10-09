@@ -5,6 +5,9 @@ on:
     paths:
       - 'fabric/**'
       - '.github/workflows/botw-fabric-build.yml'
+      - 'botw/**'
+      - 'packaging/**'
+      - 'package_preview.py'
   pull_request:
     paths:
       - 'fabric/**'
@@ -25,6 +28,16 @@ jobs:
         run: |
           chmod +x gradlew
           ./gradlew --no-daemon --stacktrace build
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Package installable Windows preview (no native Switch mods)
+        run: python package_preview.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BotwCraft-Blocks-Preview-Windows
+          path: dist/BotwCraft-Blocks-Preview.zip
+          if-no-files-found: error
       - uses: actions/upload-artifact@v4
         if: success()
         with:
