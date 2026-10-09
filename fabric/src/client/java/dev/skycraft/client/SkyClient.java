@@ -55,9 +55,9 @@ public final class SkyClient {
     public static void clientTick(Minecraft minecraft) {
     }
 
-    /** Export the user's existing Minecraft world's geometry, read-only. */
+    /** Export Minecraft geometry independently of whether Zelda has loaded. */
     public static void afterRender() {
-        if (!BotwCraftSession.requested() || !telemetryReady || !SkyLink.active()) {
+        if (!BotwCraftSession.requested() || !SkyLink.active()) {
             return;
         }
         Minecraft minecraft = Minecraft.getInstance();
