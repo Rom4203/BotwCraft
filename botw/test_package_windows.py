@@ -17,6 +17,7 @@ class PackageTests(unittest.TestCase):
             "botw/control_bridge.py",
             "botw/hud_overlay.py",
             "botw/launcher.py",
+            "botw/prism_discovery.py",
             "packaging/START_BRIDGE.bat",
             "packaging/PREVIEW_BLOCKS.bat",
             "packaging/README_INSTALL.txt",
@@ -37,7 +38,7 @@ class PackageTests(unittest.TestCase):
             with zipfile.ZipFile(out) as archive:
                 files = archive.namelist()
                 self.assertEqual(archive.testzip(), None)
-                self.assertEqual(len(files), 13)
+                self.assertEqual(len(files), 14)
                 self.assertTrue(any(p.endswith("/exefs/subsdk9") for p in files))
                 self.assertTrue(any(p.endswith("/mods/botwcraft.wxlm") for p in files))
                 self.assertIn("minecraft_mods/skycraft-0.1.2.jar", files)
@@ -46,6 +47,7 @@ class PackageTests(unittest.TestCase):
                 self.assertIn("bridge/control_bridge.py", files)
                 self.assertIn("bridge/hud_overlay.py", files)
                 self.assertIn("bridge/launcher.py", files)
+                self.assertIn("bridge/prism_discovery.py", files)
                 self.assertNotIn("prod.keys", files)
 
     def test_missing_minecraft_mod_refuses_release(self):
