@@ -12,11 +12,15 @@ import time
 ROOT = Path(__file__).resolve().parent
 
 
-def build_commands(preview_blocks=False):
+def build_commands(preview_blocks=False, gdb_port=None):
     scripts = [("host_bridge.py", ["--preview-blocks"] if preview_blocks else [])]
     if not preview_blocks:
-        scripts.extend([("ryujinx_log_relay.py", []), ("native_mesh_bridge.py", [])])
-    # Input capture is separately opt-in: do not steal Minecraft keyboard/mouse.
+        scripts.append(("ryujinx_log_relay.py", []))
+        if gdb_port is None:
+            scripts.append(("native_mesh_bridge.py", []))
+        else:
+            # IMPORTANT: exactly one consumer of SkyCraft v11 RenderRing.
+            scripts.append(("gdb_mesh_bridge.py", ["--port", str(gdb_port)]))
     return scripts
 
 
@@ -26,13 +30,19 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--preview-blocks", action="store_true",
                     help="Explicit standalone preview; NEVER claims Link telemetry.")
+    ap.add_argument("--gdb-port", type=int, default=None,
+                    help="EXPERIMENTAL: replace diagnostic mesh reader with Ryujinx GDB writer")
     args = ap.parse_args()
+    if args.gdb_port is not None and not (1 <= args.gdb_port <= 65535):
+        ap.error("invalid GDB port")
+    if args.preview_blocks and args.gdb_port is not None:
+        ap.error("preview mode cannot be combined with native GDB")
     processes = []
     try:
         print("[BotwCraft] Bridge only: Minecraft and Ryujinx are NOT started or modified.", flush=True)
         print("[BotwCraft] Launch Minecraft manually; type /botwcraft connect in its chat.", flush=True)
         print("[BotwCraft] No Java arguments, Prism profile changes or automatic worlds.", flush=True)
-        for name, extra in build_commands(args.preview_blocks):
+        for name, extra in build_commands(args.preview_blocks, args.gdb_port):
             script = ROOT / name
             if not script.is_file():
                 raise FileNotFoundError(f"Missing packaged component: {script}")
