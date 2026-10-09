@@ -47,6 +47,7 @@ def archive_manifest(root):
         "bridge/start_ryujinx_logged.py": root / "botw" / "start_ryujinx_logged.py",
         "bridge/control_bridge.py": root / "botw" / "control_bridge.py",
         "bridge/native_mesh_bridge.py": root / "botw" / "native_mesh_bridge.py",
+        "bridge/gdb_mesh_bridge.py": root / "botw" / "gdb_mesh_bridge.py",
         "bridge/hud_overlay.py": root / "botw" / "hud_overlay.py",
         "bridge/launcher.py": root / "botw" / "launcher.py",
         "bridge/prism_discovery.py": root / "botw" / "prism_discovery.py",
@@ -58,6 +59,7 @@ def archive_manifest(root):
         "prism_template/instance.cfg": root / "tools" / "minecraft-bundle" / "Prism" / "instances" / "SkyCraft" / "instance.cfg",
         "prism_template/mmc-pack.json": root / "tools" / "minecraft-bundle" / "Prism" / "instances" / "SkyCraft" / "mmc-pack.json",
         "START_BRIDGE.bat": root / "packaging" / "START_BRIDGE.bat",
+        "START_GDB_BRIDGE.bat": root / "packaging" / "START_GDB_BRIDGE.bat",
         "START_RYUJINX_LOGGED.bat": root / "packaging" / "START_RYUJINX_LOGGED.bat",
 
         "README_INSTALL.txt": root / "packaging" / "README_INSTALL.txt",
