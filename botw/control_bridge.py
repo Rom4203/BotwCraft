@@ -14,6 +14,7 @@ import socket
 import sys
 import time
 from dataclasses import dataclass
+from ctypes import wintypes
 
 # Win32 virtual-key -> SDL3 scancode used by Minecraft/SkyCraft.
 SDL_KEYS = {
@@ -24,7 +25,7 @@ SDL_KEYS = {
     **{0x31 + i: 30 + i for i in range(9)},  # 1..9
 }
 MOUSE = {0x01: 1, 0x02: 3}                    # SDL mouse left=1, right=3
-IN_KEY, IN_MOUSE_BUTTON, IN_RELEASE_ALL = 1, 2, 6
+IN_KEY, IN_MOUSE_BUTTON, IN_CURSOR, IN_RELEASE_ALL = 1, 2, 4, 6
 MC_IN_WORLD, MC_SCREEN_OPEN, MC_ON_GROUND, MC_SNEAKING, MC_SPRINTING = 1, 2, 4, 8, 16
 RAW_KEYBOARD = ("W", "A", "S", "D", "SPACE", "SHIFT", "CTRL", "E")
 VK_CONTROL = {"W": 0x57, "A": 0x41, "S": 0x53, "D": 0x44,
@@ -41,6 +42,26 @@ def key_events(previous: set[int], current: set[int]):
             events.append([IN_MOUSE_BUTTON, button, int(vk in current), 0, 0])
     return events
 
+class POINT(ctypes.Structure):
+    _fields_ = [("x", wintypes.LONG), ("y", wintypes.LONG)]
+
+def mouse_events(last: tuple[int, int] | None,
+                 current: tuple[int, int] | None,
+                 virtual: tuple[int, int]):
+    """Relative physical mouse -> SkyCraft absolute cursor event + right stick.
+
+    The Java SkyCraft consumer computes deltas from the event's virtual
+    coordinates, so the first physical sample never causes a huge camera jump.
+    """
+    if last is None or current is None:
+        return [], (0.0, 0.0), virtual
+    dx = max(-80, min(80, int(current[0] - last[0])))
+    dy = max(-80, min(80, int(current[1] - last[1])))
+    if dx == 0 and dy == 0:
+        return [], (0.0, 0.0), virtual
+    pos = (virtual[0] + dx, virtual[1] + dy)
+    return [[IN_CURSOR, 0, pos[0], pos[1], 0]], (_clamp(dx / 25.0), _clamp(-dy / 25.0)), pos
+
 @dataclass(frozen=True)
 class GamepadState:
     right: float = 0.0
@@ -49,6 +70,8 @@ class GamepadState:
     sprint: bool = False
     crouch: bool = False
     interact: bool = False
+    look_right: float = 0.0
+    look_up: float = 0.0
 
 def _clamp(value: float):
     return max(-1.0, min(1.0, value))
@@ -123,6 +146,7 @@ class VirtualController:
         vg = self.vg
         p = self.pad
         p.left_joystick_float(x_value_float=state.right, y_value_float=state.forward)
+        p.right_joystick_float(x_value_float=state.look_right, y_value_float=state.look_up)
         for active, button in (
             (state.jump, vg.XUSB_BUTTON.XUSB_GAMEPAD_X),
             (state.sprint, vg.XUSB_BUTTON.XUSB_GAMEPAD_B),
@@ -148,6 +172,8 @@ class WinKeys:
         self.api.GetWindowTextW.restype = ctypes.c_int
         self.api.GetAsyncKeyState.argtypes = (ctypes.c_int,)
         self.api.GetAsyncKeyState.restype = ctypes.c_short
+        self.api.GetCursorPos.argtypes = (ctypes.POINTER(POINT),)
+        self.api.GetCursorPos.restype = wintypes.BOOL
 
     def ryujinx_focused(self):
         handle = self.api.GetForegroundWindow()
@@ -160,6 +186,10 @@ class WinKeys:
     def pressed(self):
         return {vk for vk in (*SDL_KEYS, *MOUSE)
                 if self.api.GetAsyncKeyState(vk) & 0x8000}
+
+    def cursor(self):
+        pos = POINT()
+        return (int(pos.x), int(pos.y)) if self.api.GetCursorPos(ctypes.byref(pos)) else None
 
 def run(port=39847, controller=True):
     if sys.platform != "win32":
@@ -176,6 +206,8 @@ def run(port=39847, controller=True):
     prior = set()
     last_mc = None
     last_mc_time = None
+    last_cursor = None
+    virtual_cursor = (0, 0)
     try:
         print("[BotwCraft] Input sync running. Focus Ryujinx; Ctrl+C here to stop.", flush=True)
         while True:
@@ -183,6 +215,11 @@ def run(port=39847, controller=True):
             current = input_api.pressed() if focused else set()
             events = key_events(prior, current)
             prior = current
+            cursor = input_api.cursor() if focused else None
+            cursor_events, look, virtual_cursor = mouse_events(
+                last_cursor, cursor, virtual_cursor)
+            events.extend(cursor_events)
+            last_cursor = cursor
             if events:
                 try:
                     bridge_request({"type": "input", "events": events}, port)
@@ -209,6 +246,10 @@ def run(port=39847, controller=True):
                 last_mc, last_mc_time = status, now
             elif not focused:
                 last_mc, last_mc_time = None, None
+            if focused and not (status and status.get("flags", 0) & MC_SCREEN_OPEN):
+                state = GamepadState(state.right, state.forward, state.jump,
+                                     state.sprint, state.crouch, state.interact,
+                                     look[0], look[1])
             if pad:
                 pad.write(state if focused else GamepadState())
             time.sleep(1/60)
