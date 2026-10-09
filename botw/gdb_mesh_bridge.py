@@ -125,11 +125,21 @@ class RspClient:
                 raise RspError(f"GDB write at offset {offset} refused: {response[:100]}")
 
     def resume(self):
-        if self.stopped:
-            response = self.command("c")
-            if response not in ("OK", ""):
-                raise RspError("GDB continue refused: " + response[:100])
-            self.stopped = False
+        """In GDB RSP, 'c' receives an ACK now and a stop reply LATER.
+
+        Never call command("c"): that waits for the next T/S stop packet,
+        which does not arrive until Ctrl+C or another debugger breakpoint.
+        The old implementation blocked all mesh updates at startup.
+        """
+        if not self.stopped:
+            return
+        request = b"c"
+        self.sock.sendall(b"$" + request + b"#" +
+                          f"{sum(request) & 255:02x}".encode("ascii"))
+        ack = self._byte()
+        if ack != b"+":
+            raise RspError("GDB continue did not ACK request: " + repr(ack))
+        self.stopped = False
 
 
 def log_source(argument=None):
@@ -195,9 +205,16 @@ def run(args):
             time.sleep(3)
         print(f"[BotwCraft GDB] Guest-owned buffer at 0x{address:x}", flush=True)
         sections, frame, last_send, last_result = {}, 1, 0.0, None
+        print(f"[BotwCraft GDB] Connecting to local debugger on port {args.port}...",
+              flush=True)
         with RspClient(port=args.port) as gdb:
+            print("[BotwCraft GDB] Connected. Checking guest stop/resume...",
+                  flush=True)
             gdb.stop(first=True)
             gdb.resume()
+            print("[BotwCraft GDB] Game resumed; waiting for actual Minecraft "
+                  "section packets...", flush=True)
+            waiting_printed = 0.0
             while True:
                 if struct.unpack_from("<II", shared) != (
                         mesh.PROTOCOL_MAGIC, mesh.PROTOCOL_VERSION):
@@ -215,6 +232,13 @@ def run(args):
                         if mesh.minecraft_heartbeat_is_live(
                             shared, int(kernel.GetTickCount64())) else None)
                 now = time.monotonic()
+                if (pose is None or not sections) and now - waiting_printed > 12:
+                    print(f"[BotwCraft GDB] Waiting for Minecraft export: "
+                          f"sections={len(sections)}, "
+                          f"pose={'present' if pose is not None else 'absent'}. "
+                          "Open a world and type /botwcraft connect.",
+                          flush=True)
+                    waiting_printed = now
                 if pose is not None and sections and now - last_send >= 1/args.hz:
                     packet, count = make_frame_packet(frame, sections, pose)
                     if packet:
