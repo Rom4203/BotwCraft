@@ -1,58 +1,73 @@
-BOTWCRAFT - EXPERIMENTAL DEVELOPMENT PACKAGE
-=============================================
+BOTWCRAFT — PREMIER TEST NATIF (SWITCH BOTW 1.5.0)
+=====================================================
 
-GAME: The Legend of Zelda: Breath of the Wild Switch 1.0.0
-ARCHITECTURE: WiiXLaunch (Switch), Fabric Minecraft (Java 25), Windows bridge
-SOURCE: https://github.com/Rom4203/BotwCraft/tree/botw-ryujinx-development
+CETTE ARCHIVE EST UNE COMPILATION ARM64 REELLE, MAIS LA JOUABILITE
+COMPLETE MINECRAFT DANS HYRULE N'A PAS ENCORE ETE DEMONTREE.
 
-HONEST STATUS: NOT YET PLAYABLE AS MINECRAFT INSIDE BOTW.
-This package can compile and contains both game mods plus the bridge, but
-Minecraft->Link control, collision streaming, native blocks and rendering are
-not yet connected to the game. Never mistake "build succeeded" for "game works".
+VERSION CIBLE : BOTW Switch 1.5.0 exclusivement.
+Emulateur : Ryujinx sur Windows.
+Minecraft : Java 26.3, Fabric, Java 25, via Prism Launcher.
 
-CONTENTS
---------
-ryujinx_mods/contents/01007ef00011e000/BotwCraft/exefs/subsdk9
-ryujinx_mods/contents/01007ef00011e000/BotwCraft/romfs/WiiXLaunch/mods/botwcraft.wxlm
-minecraft_mods/skycraft-*.jar
-bridge/host_bridge.py
-bridge/ryujinx_log_relay.py
-bridge/control_bridge.py
-bridge/launcher.py
-START_BRIDGE.bat
-
-BUILD FROM SOURCE
+CE QUI EST INCLUS
 -----------------
-Extract the source ZIP, run BUILD_AND_PACKAGE.bat.
-Prerequisites:
-- Git (auto-downloads WiiXLaunch source and submodules if absent)
-- devkitPro/devkitA64 in D:\Bordel\Code\gameboy\devkit\devkitPro
-- Python in D:\Program Files\Python\python.exe
-- JDK 25 on PATH or JAVA_HOME
-- Internet for Gradle/Fabric/Minecraft build dependencies
-Compiled ZIP appears at dist\BotwCraft-experimental.zip.
+- subsdk9 : vrai module WiiXLaunch compilé pour Switch ARM64.
+- botwcraft.wxlm : vrai module WiiXLaunch BOTW, avec rendu de mesh natif.
+- skycraft-*.jar : Minecraft Fabric basé sur SkyCraft original.
+- Le pont Windows, le relais des coordonnées Link et des maillages.
+- Un installateur Windows avec sauvegarde des anciens fichiers BotwCraft.
 
-PLAYTEST SAFETY
----------------
-Ryujinx v1.3.3 was previously observed crashing with an unverified BOTW
-player hook at relative address 0x873374. The build applies a source
-guard against that hook. This is NOT a verified compatible game implementation.
-Do not use your only Zelda saves or expect working Minecraft gameplay.
+CORRECTION CRITIQUE :
+Le .wxlm doit être copié dans la SD virtuelle Ryujinx :
+  sdcard/WiiXLaunch/mods/01007EF00011E000/botwcraft.wxlm
+Il NE DOIT PAS se trouver uniquement dans romfs du mod Ryujinx !
+Le module subsdk9 va, lui, dans :
+  mods/contents/01007ef00011e000/BotwCraft/exefs/subsdk9
 
-Only install in a separate test profile, after backing up Ryujinx data.
-Copy ryujinx_mods/contents into the Ryujinx mods/contents directory.
-Install Minecraft 26.3, Fabric Loader 0.19.5+, Fabric API matching 26.3
-and Java 25; copy minecraft_mods/skycraft-*.jar into MC instance mods.
-START_BRIDGE.bat runs the Windows-side host, log relay and keyboard/controller\nbridge together. For controller mode you also need the ViGEmBus driver and\nthe 'vgamepad' Python package, and must select the virtual Xbox 360 pad\nas Ryujinx Player 1. Without these, input can still go to a linked Minecraft\ninstance, but it cannot control BOTW. Minecraft does NOT start automatically.\nThe controller can follow measured Minecraft velocity only if a valid BOTW\nposition feed has first activated Minecraft's SkyCraft shared-memory link.\nThe old version-mismatched BOTW player hook is deliberately disabled, so\nthat feed is unavailable on BOTW Switch 1.0.0 until the hook is reverse-engineered.
+COMMENT FAIRE LE PREMIER TEST
+-----------------------------
+1. Fermer Ryujinx, Minecraft et Prism. Sauvegarder les parties Zelda.
+   Retirer les anciens modules BotwCraft des emplacements actifs
+   (pas seulement les renommer).
+2. Extraire le ZIP et exécuter INSTALL_NATIVE_TEST.bat.
+   S'il ne trouve pas Prism ou les données Ryujinx, choisir leur dossier
+   dans la fenêtre affichée. L'installateur prépare BotwCraftNative dans
+   Prism et installe Fabric API (téléchargé et vérifié).
+3. Exécuter START_BRIDGE.bat. Il démarre le pont Windows et Minecraft
+   BotwCraftNative via Prism Launcher.
+4. Lancer BOTW Switch 1.5.0 dans Ryujinx. Charger une partie.
+5. Si Minecraft ne crée pas son monde, ou si Zelda plante, arrêter le
+   test : c'est une information sur l'intégration native, pas une raison
+   de forcer la version 1.0.0.
 
-UNDO
-----
-Close Ryujinx and MOVE the BotwCraft folder out of ALL Ryujinx mod paths.
-Renaming BotwCraft_DESACTIVE does not disable it if still inside mods/contents.
-Restore your earlier known-good copy and saves if needed.
+OBJECTIF DU PREMIER TEST
+------------------------
+- Zelda arrive-t-il au jeu sans planter ?
+- Le journal Ryujinx indique-t-il le chargement de botwcraft.wxlm ?
+- L'enregistrement NVN est-il confirmé ?
+- Des messages BotwCraft:NATIVE_POSITION_MILLI apparaissent-ils lorsque
+  Link se déplace ? Si oui, la liaison Link -> Minecraft est active.
+- Minecraft peut-il ouvrir automatiquement son monde via SkyCraft ?
 
-THIRD PARTY
+ATTENTION : Le bon affichage des blocs, la camera, les textures,
+les collisions et la physique complete ne sont pas encore verifies en jeu.
+La compilation reussie ne suffit PAS pour declarer BotwCraft jouable.
+
+INSTALLATION SANS RISQUE SUR LES AUTRES MODS
+-------------------------------------------
+L'installateur ne modifie pas les sauvegardes et sauvegarde les anciens
+fichiers du mod nomme BotwCraft. Il ne retire pas les mods tiers.
+Pour annuler : arreter les jeux et deplacer le dossier BotwCraft hors du
+repertoire mods/contents, puis supprimer ou deplacer le botwcraft.wxlm de
+la SD virtuelle Ryujinx. Ne pas les laisser dans un autre dossier actif
+de mods/contents.
+
+DEPENDANCES
 -----------
-SkyCraft is by chasmlol (MIT); WiiXLaunch and other upstream components have
-their own licenses. This package does not distribute Nintendo keys, firmware,
-the XCI or decrypted Zelda binaries.
+- Ryujinx installe et votre propre jeu BOTW mis a jour en 1.5.0.
+- Prism Launcher avec compte Minecraft valide.
+- Python 3.10+ (le script essaie egalement py -3).
+- Connexion internet pour Fabric API au premier demarrage.
+- Aucun fichier Nintendo, cle, firmware, XCI ou ROM n'est fourni ici.
+
+SOURCE : https://github.com/Rom4203/BotwCraft
+LICENCES : voir LICENSE et THIRD-PARTY-NOTICES.md
