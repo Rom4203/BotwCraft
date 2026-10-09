@@ -124,7 +124,11 @@ def main():
         root = find_ryujinx_root(args.ryujinx_data)
         install(bundle, root)
         (bundle / "ryujinx-data.txt").write_text(str(root) + "\n", encoding="utf-8")
-    except (OSError, ValueError) as exc:
+        # Also configure a completely separate Minecraft Fabric profile.
+        # Do not use the old experimental preview profile.
+        from install_native_mc import install_native_minecraft
+        install_native_minecraft(bundle)
+    except (OSError, ValueError, RuntimeError) as exc:
         raise SystemExit(f"[BotwCraft] ERREUR installation : {exc}")
 
 
