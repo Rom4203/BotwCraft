@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 #include "../native_guest_mesh.hpp"
+#include "../native_world_scene.hpp"
 
 static bool g_position_supported = false;
 static bool g_register_succeeds = true;
@@ -154,6 +155,44 @@ int main() {
     reinterpret_cast<uint8_t*>(guestAddr)[sizeof(hdr) + 4] ^= 0xff;
     g_draw(1, 1, 1920, 1080);
     assert(g_draw_calls == 4 && g_draw_vertices == 3);
+
+    // Live world-space BWC2 tests. Use a real world-geometry packet, not
+    // triangles already projected by the Minecraft screen camera.
+    auto findAddress = [&](const char* prefix) {
+        for (const auto& line : g_logs) {
+            if (line.find(prefix) == 0)
+                return static_cast<uintptr_t>(std::strtoull(
+                    line.c_str() + std::strlen(prefix), nullptr, 16));
+        }
+        return uintptr_t(0);
+    };
+    uintptr_t worldAddr = findAddress("BotwCraft:BWC2_WORLD_BUFFER_ADDR=0x");
+    uintptr_t cameraAddr = findAddress("BotwCraft:BWC2_CAMERA_SLOT_ADDR=0x");
+    assert(worldAddr && cameraAddr);
+    auto* worldHead = reinterpret_cast<BotwCraftWorld::Header*>(worldAddr);
+    *worldHead = {};
+    worldHead->magic = BotwCraftWorld::kMagic;
+    worldHead->version = BotwCraftWorld::kVersion;
+    worldHead->frameId = 5;
+    worldHead->vertexCount = 3;
+    auto* worldVerts = reinterpret_cast<BotwCraftWorld::Vertex*>(
+        worldAddr + sizeof(*worldHead));
+    worldVerts[0] = {-0.2f,-0.2f,0.5f,0,0,0xff1188ee,0xf00,1};
+    worldVerts[1] = { 0.2f,-0.2f,0.5f,1,0,0xff1188ee,0xf00,1};
+    worldVerts[2] = { 0.0f, 0.2f,0.5f,1,1,0xff1188ee,0xf00,1};
+    worldHead->payloadHash = BotwCraftWorld::Hash(worldVerts,
+        sizeof(BotwCraftWorld::Vertex)*3);
+    auto* cameraSlot = reinterpret_cast<BotwCraftWorld::ViewProjection*>(cameraAddr);
+    // NO camera: BWC2 must not render a pretend 2D overlay.
+    g_draw(1,1,1280,720);
+    assert(!Contains("BotwCraft:WORLD_SCENE_3D_ACCEPTED"));
+    // Identity is strictly a pure native-math test, never a production pose.
+    for (int i=0;i<16;i++) cameraSlot->m[i] = (i%5)==0 ? 1.0f : 0.0f;
+    cameraSlot->ready = true;
+    g_draw(1,1,1280,720);
+    assert(Contains("BotwCraft:WORLD_SCENE_3D_ACCEPTED"));
+    cameraSlot->ready = false;
+    assert(g_file_reads == 0);
 
     // Future version where exact player offsets have been established:
     g_logs.clear();
