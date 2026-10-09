@@ -78,6 +78,22 @@ class Tests(unittest.TestCase):
             self.assertIn("name=BotwCraftPreview", cfg)
             self.assertIn("-Dbotwcraft.experimentalBlocks=true", cfg)
 
+    def test_existing_manual_prism_profile_gets_preview_java_flags(self):
+        existing = ("[General]\\nname=BotwCraftPreview\\n"
+                    "OverrideJavaArgs=false\\n"
+                    "JvmArgs=-Xmx3G -Dskycraft.startHidden=true\\n"
+                    "MinMemAlloc=512\\n")
+        out = install_preview.preview_jvm_config(existing)
+        self.assertIn("OverrideJavaArgs=true", out)
+        self.assertIn("-Xmx3G", out)
+        self.assertIn("-Dbotwcraft.experimentalBlocks=true", out)
+        self.assertIn("-Dskycraft.startHidden=false", out)
+        self.assertIn("-Dskycraft.showWindow=true", out)
+        self.assertNotIn("-Dskycraft.startHidden=true", out)
+        self.assertIn("MinMemAlloc=512", out)
+        self.assertEqual(out, install_preview.preview_jvm_config(out))
+        self.assertEqual(out.count("JvmArgs="), 1)
+
     def test_fabric_version_selection_requires_jar(self):
         candidate = dict(date_published="2026-10-09", files=[
             dict(primary=True, filename="fabric-api-test.jar", url="https://cdn.modrinth.com/file.jar")])
