@@ -18,7 +18,8 @@ import net.minecraft.world.level.block.Blocks;
  */
 public final class BlockPreview {
     private static final boolean ENABLED = Boolean.getBoolean("botwcraft.experimentalBlocks");
-    private static UUID initializedPlayer;
+    private static volatile UUID initializedPlayer;
+    private static volatile UUID pendingPlayer;
 
     private BlockPreview() {}
 
@@ -29,6 +30,7 @@ public final class BlockPreview {
     public static void tick(Minecraft minecraft) {
         if (!ENABLED || minecraft.player == null || minecraft.level == null) {
             initializedPlayer = null;
+            pendingPlayer = null;
             return;
         }
         MinecraftServer server = minecraft.getSingleplayerServer();
@@ -36,22 +38,24 @@ public final class BlockPreview {
             return;  // Never edit a remote multiplayer server's world.
         }
         UUID playerId = minecraft.player.getUUID();
-        if (playerId.equals(initializedPlayer)) {
+        if (playerId.equals(initializedPlayer) || playerId.equals(pendingPlayer)) {
             return;
         }
-        initializedPlayer = playerId;
+        pendingPlayer = playerId;
         server.execute(() -> {
-            if (server.getPlayerList().getPlayer(playerId) == null) {
-                return;
-            }
-            ServerLevel world = server.overworld();
-            if (world == null) {
-                return;
-            }
+            try {
+                if (server.getPlayerList().getPlayer(playerId) == null) {
+                    return;
+                }
+                ServerLevel world = server.overworld();
+                if (world == null) {
+                    return;
+                }
             // The preview always spawns at MC (0, 80, 0), with Y-up. Platform
             // supports the player at Y=80 (top of block at Y=79).
             BlockPos center = new BlockPos(0, 79, 0);
             if (!world.getBlockState(center).isAir()) {
+                initializedPlayer = playerId;
                 return;  // Existing saved platform: never reset players' builds.
             }
             int placed = 0;
@@ -64,7 +68,11 @@ public final class BlockPreview {
                     }
                 }
             }
+            initializedPlayer = playerId;
             SkyCraft.LOG.info("BotwCraft block preview: {} starter blocks created", placed);
+            } finally {
+                pendingPlayer = null; // retry next tick if server/player was not ready
+            }
         });
     }
 }
