@@ -1,7 +1,7 @@
 @echo off
 setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0"
-if not exist "bridge\launcher.py" (
+if not exist "bridge\launcher.py" !BOTWCRAFT_EXTRA! (
  echo [BotwCraft] ERROR: bridge\launcher.py introuvable.
  pause
  exit /b 1
@@ -23,6 +23,11 @@ if exist "ryujinx-log-path.txt" (
 )
 echo [BotwCraft] Bridge experimental BOTW 1.5.0 - Ryujinx se lance separement.
 echo [BotwCraft] Ctrl+C pour arreter.
+set "BOTWCRAFT_EXTRA="
+if defined BOTWCRAFT_GDB_PORT (
+ set "BOTWCRAFT_EXTRA=--gdb-port !BOTWCRAFT_GDB_PORT!"
+ echo [BotwCraft] GDB mesh transfer EXPERIMENTAL enabled, port !BOTWCRAFT_GDB_PORT!
+)
 rem A Python variable including "py -3" cannot be quoted as one executable.
 if exist "D:\Program Files\Python\python.exe" (
  "D:\Program Files\Python\python.exe" -u "bridge\launcher.py"
