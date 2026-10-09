@@ -143,3 +143,51 @@ def prism_data_dir(executable, env=None):
     if not path:
         raise EnvironmentError("APPDATA manquant : dossier de Prism inconnu")
     return Path(path) / "PrismLauncher"
+
+
+def prism_instances_root(data_dir, env=None):
+    """Resolve Prism's configured instance folder, including a relocated D: drive.
+
+    Prism stores InstanceDir in prismlauncher.cfg; default is instances/.
+    Never invent a fallback directory when an explicit setting is invalid.
+    """
+    env = os.environ if env is None else env
+    root = Path(data_dir).expanduser()
+    override = env.get("BOTWCRAFT_PRISM_INSTANCES")
+    if override:
+        return Path(os.path.expandvars(override)).expanduser()
+    for file in (root / "prismlauncher.cfg", root / "PrismLauncher.cfg"):
+        if not file.is_file():
+            continue
+        try:
+            for line in file.read_text(encoding="utf-8-sig").splitlines():
+                key, sep, value = line.partition("=")
+                if sep and key.strip() == "InstanceDir":
+                    value = value.strip().strip('"')
+                    if not value:
+                        break
+                    directory = Path(os.path.expandvars(value)).expanduser()
+                    return directory if directory.is_absolute() else root / directory
+        except OSError:
+            continue
+    return root / "instances"
+
+
+def prism_instance_dir(data_dir, name, env=None):
+    """Find the actual Prism instance, rather than a phantom APPDATA copy."""
+    if name not in ("BotwCraftNative", "BotwCraftPreview"):
+        raise ValueError("unexpected BotwCraft instance name")
+    return prism_instances_root(data_dir, env) / name
+
+
+def prism_minecraft_dir(instance_dir):
+    """Prism 11 uses minecraft/ on this user's setup; older versions use .minecraft/."""
+    instance = Path(instance_dir)
+    modern = instance / "minecraft"
+    legacy = instance / ".minecraft"
+    if modern.is_dir():
+        return modern
+    if legacy.is_dir():
+        return legacy
+    # New Prism instances use this name; do not create both folders.
+    return modern
