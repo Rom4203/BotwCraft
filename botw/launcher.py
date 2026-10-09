@@ -12,7 +12,8 @@ import time
 ROOT = Path(__file__).resolve().parent
 
 
-def build_commands(preview_blocks=False, gdb_port=None, world_gdb_port=None):
+def build_commands(preview_blocks=False, gdb_port=None, world_gdb_port=None,
+                   hud_overlay=False):
     scripts = [("host_bridge.py", ["--preview-blocks"] if preview_blocks else [])]
     if not preview_blocks:
         scripts.append(("ryujinx_log_relay.py", []))
@@ -22,6 +23,10 @@ def build_commands(preview_blocks=False, gdb_port=None, world_gdb_port=None):
             scripts.append(("gdb_mesh_bridge.py", ["--port", str(gdb_port)]))
         else:
             scripts.append(("native_mesh_bridge.py", []))
+        if hud_overlay:
+            # True SkyCraft v11 GPU HUD, click-through Win32 above Ryujinx.
+            # Never take focus; Minecraft owns keyboard and mouse.
+            scripts.append(("hud_overlay.py", []))
     return scripts
 
 
@@ -35,6 +40,8 @@ def main():
                     help="EXPERIMENTAL: replace diagnostic mesh reader with Ryujinx GDB writer")
     ap.add_argument("--world-gdb-port", type=int, default=None,
                     help="BWC2 real-world Hyrule 3D channel, separate from 2D GDB")
+    ap.add_argument("--hud-overlay", action="store_true",
+                    help="Display original Minecraft HUD over Ryujinx without focus capture")
     args = ap.parse_args()
     if args.world_gdb_port is not None and not (1 <= args.world_gdb_port <= 65535):
         ap.error("invalid world GDB port")
@@ -51,7 +58,7 @@ def main():
         print("[BotwCraft] Launch Minecraft manually; type /botwcraft connect in its chat.", flush=True)
         print("[BotwCraft] No Java arguments, Prism profile changes or automatic worlds.", flush=True)
         for name, extra in build_commands(args.preview_blocks, args.gdb_port,
-                                                  args.world_gdb_port):
+                                                  args.world_gdb_port, args.hud_overlay):
             script = ROOT / name
             if not script.is_file():
                 raise FileNotFoundError(f"Missing packaged component: {script}")
