@@ -36,7 +36,7 @@ def start_minecraft(preview_blocks=False):
     opts += " -Dbotwcraft.experimentalBlocks=true -Dskycraft.startHidden=true"
     env["JAVA_TOOL_OPTIONS"] = opts.strip()
     print(f"[BotwCraft] Launching Minecraft through {prism}", flush=True)
-    return subprocess.Popen([str(prism), "--launch", "SkyCraft"], env=env)
+    return subprocess.Popen([str(prism), "--launch", "BotwCraftPreview"], env=env)
 
 def build_commands(preview_blocks=False):
     scripts = [
