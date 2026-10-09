@@ -1,7 +1,7 @@
 """Validate SkyCraft v11 overlay control/header parser without a GPU."""
 import struct
 import unittest
-from botw.hud_overlay import decode_slot_header, OFF_HDR
+from botw.hud_overlay import decode_slot_header, remove_void_background, OFF_HDR
 
 class OverlayTests(unittest.TestCase):
     def make_read(self, width, height, flags=1, frame=42, slot=1):
@@ -9,6 +9,19 @@ class OverlayTests(unittest.TestCase):
         struct.pack_into("<III", data, OFF_HDR + slot * 64, width, height, flags)
         struct.pack_into("<Q", data, OFF_HDR + slot * 64 + 0x10, frame)
         return lambda offset, size: bytes(data[offset:offset + size])
+
+    def test_background_key_preserves_blocks_and_frame_size(self):
+        sky = bytes((100, 170, 240, 255))
+        stone = bytes((90, 65, 35, 255))
+        frame = sky + sky + sky + stone
+        result = remove_void_background(frame, 2, 2, tolerance=20)
+        self.assertEqual(len(result), len(frame))
+        self.assertEqual(result[:12], bytes(12))
+        self.assertEqual(result[12:], stone)
+
+    def test_keyer_rejects_bad_length(self):
+        with self.assertRaises(ValueError):
+            remove_void_background(b"wrong", 10, 10)
 
     def test_reads_actual_skycraft_v11_slot(self):
         reader = self.make_read(1280, 720, flags=1, frame=31)
