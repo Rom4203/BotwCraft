@@ -31,6 +31,11 @@ def parse_pose(line):
         integers = tuple(int(v) for v in native.groups())
         if any(abs(v) > 100000000 for v in integers):
             return None
+        # During Zelda loading, the native PlayerInfo pointer can be
+        # initialized but still contain a zero vector. This is NOT a valid
+        # in-world Link pose and must not mark the host bridge "active".
+        if integers == (0, 0, 0):
+            return None
         x, y, z = (v / 1000.0 for v in integers)
         return dict(type="pose", x=x, y=y, z=z,
                     yaw=0.0, pitch=0.0, world=1)
@@ -132,6 +137,10 @@ def relay(path=None, port=39847, interval=0.2, from_start=False, dry_run=False):
     offset = 0
     notice = 0.0
     warned_version = False
+    last_sent_pose = None
+    last_sent_at = 0.0
+    last_print_pose = None
+    last_print_at = 0.0
     print("[BotwCraft relay] Waiting for Ryujinx log; Ctrl+C to stop", flush=True)
     if explicit is not None:
         print(f"[BotwCraft relay] Source: {explicit}", flush=True)
@@ -164,6 +173,10 @@ def relay(path=None, port=39847, interval=0.2, from_start=False, dry_run=False):
                 current = candidate
                 offset = 0 if from_start or time.time() - stat.st_mtime < 120 else stat.st_size
                 warned_version = False
+                last_sent_pose = None
+                last_print_pose = None
+                last_sent_at = 0.0
+                last_print_at = 0.0
                 print(f"[BotwCraft relay] Watching {candidate}", flush=True)
             elif stat.st_size < offset:
                 offset = 0
@@ -181,11 +194,24 @@ def relay(path=None, port=39847, interval=0.2, from_start=False, dry_run=False):
                     pose = parse_pose(line)
                     if pose is None:
                         continue
+                    now = time.monotonic()
+                    signature = (pose["x"], pose["y"], pose["z"])
+                    # Keep host heartbeat fresh, but never flood console
+                    # with 5 identical updates/second.
+                    if (signature == last_sent_pose
+                            and now - last_sent_at < 0.45):
+                        continue
                     ok = dry_run or forward_pose(pose, port)
                     state = ("dry-run" if dry_run else
                              ("sent" if ok else "host bridge unavailable"))
-                    print(f"[BotwCraft relay] {state}: "
-                          f"{pose['x']}, {pose['y']}, {pose['z']}", flush=True)
+                    if ok:
+                        last_sent_pose = signature
+                        last_sent_at = now
+                    if signature != last_print_pose or now - last_print_at >= 8.0:
+                        print(f"[BotwCraft relay] {state}: "
+                              f"{pose['x']}, {pose['y']}, {pose['z']}", flush=True)
+                        last_print_pose = signature
+                        last_print_at = now
         except (OSError, UnicodeError) as exc:
             print(f"[BotwCraft relay] Log unavailable: {exc}", flush=True)
             current = None
