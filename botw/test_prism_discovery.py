@@ -62,5 +62,24 @@ class PrismTests(unittest.TestCase):
             self.assertIsNone(locator.locate_prism(
                 allow_picker=False, module_file=str(Path(d) / "prism_discovery.py"),
                 env={"PATH": "", "LOCALAPPDATA": str(Path(d) / "missing")}))
+
+    def test_relocated_instance_root_config(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            data = root / "PrismLauncher"
+            data.mkdir()
+            moved = root / "custom" / "instances"
+            moved.mkdir(parents=True)
+            (data / "prismlauncher.cfg").write_text("InstanceDir=" + str(moved) + "\n")
+            self.assertEqual(locator.prism_instance_dir(data, "BotwCraftNative"),
+                             moved / "BotwCraftNative")
+
+    def test_modern_game_dir_wins_over_stale_dot_minecraft(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".minecraft").mkdir()
+            (root / "minecraft").mkdir()
+            self.assertEqual(locator.prism_minecraft_dir(root), root / "minecraft")
+
 if __name__ == "__main__":
     unittest.main()
