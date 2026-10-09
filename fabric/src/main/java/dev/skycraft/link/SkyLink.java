@@ -105,6 +105,15 @@ public final class SkyLink {
 		return shm;
 	}
 
+	/** Tell the host that manual Minecraft linkage was disabled, without unmapping. */
+	public static void stopHeartbeat() {
+		MemorySegment seg = shm;
+		if (seg != null) {
+			LONG.setRelease(seg, OFF_HEADER + H_MC_HEARTBEAT, 0L);
+			seg.set(JAVA_INT, OFF_HEADER + H_MC_PID, 0);
+		}
+	}
+
 	/** Try to open the mapping at most once a second. Call regularly from the render thread. */
 	public static void poll() {
 		if (shm != null) {
