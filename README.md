@@ -4,6 +4,32 @@
 
 > **Status: NOT PLAYABLE.** The project currently compiles the WiiXLaunch host and guest, builds a Fabric mod, and packages a Windows telemetry relay. There is no verified BOTW v1.0.0 player movement hook, native return transport, collision export, or block renderer. Do not assume a successful build means gameplay works. Back up your Zelda saves before testing.
 
+## Experiment: build real Minecraft blocks over Ryujinx (preview, not full BOTW port)
+
+A limited **creative construction preview** can now render Minecraft 26.3
+block geometry as a desktop layer above Ryujinx, reuse the actual Minecraft
+placing/breaking mechanics, and save the blocks in a **separate** Prism world.
+It creates a starter grass platform, forwards keyboard/mouse events, and can
+attempt to map Minecraft movement onto a virtual gamepad.
+
+**Important:** This does **not** know Link's actual coordinates, Hyrule's
+collision geometry or Zelda's scene depth. It is not equivalent to SkyCraft's
+real game-engine integration; the two views can drift. It never needs the
+unverified native BOTW 1.0.0 hook.
+
+1. Install [Prism Launcher](https://prismlauncher.org/) and sign into your own
+   Minecraft account (only once).
+2. Download the latest **BotwCraft-Blocks-Preview-Windows** ZIP from
+   [GitHub Actions](https://github.com/Rom4203/BotwCraft/actions/workflows/botw-fabric-build.yml),
+   extract it, and double-click `INSTALL_AND_PREVIEW.bat`.
+3. The installer sets up an isolated Minecraft 26.3 Fabric instance, fetches
+   and verifies Fabric API, then launches the sandbox bridge. Start BOTW in
+   Ryujinx normally. The Switch mods are **not installed** by this preview.
+
+Read the included `README_PREVIEW.txt` for limitations and missing optional
+virtual-controller dependency. This mode has automated build/protocol tests,
+but **has not been confirmed in an actual Ryujinx + Minecraft playtest**.
+
 ## Windows development build
 
 1. Download this branch's source archive and extract it.
