@@ -139,6 +139,12 @@ def relay(path=None, port=39847, interval=0.2, from_start=False, dry_run=False):
         print("[BotwCraft relay] If no logs are found, create ryujinx-log-path.txt "
               "beside START_BRIDGE.bat with a log file or Logs directory.", flush=True)
     while True:
+        if path is None:
+            selected = user_log_override()
+            if selected != explicit:
+                explicit = selected
+                current = None
+                print(f"[BotwCraft relay] Updated log source: {explicit}", flush=True)
         if explicit is None:
             candidate = discover_latest_log()
         elif explicit.is_file() or explicit.suffix.lower() in (".log", ".txt"):
