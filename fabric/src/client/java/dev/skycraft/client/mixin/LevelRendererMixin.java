@@ -19,7 +19,7 @@ public abstract class LevelRendererMixin {
 		cancellable = true
 	)
 	private void skycraft$skipLevel(CallbackInfo ci) {
-		if (SkyClient.linked() && !Boolean.getBoolean("botwcraft.experimentalBlocks")) {
+		if (SkyClient.linked() && !dev.skycraft.client.BlockPreview.enabled()) {
 			ci.cancel();
 		}
 	}
