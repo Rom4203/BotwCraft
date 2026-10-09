@@ -44,12 +44,14 @@ Minecraft's textured material/atlas pipeline.
 
 ## Critical limitations before this is actually playable
 
-**BOTW Switch 1.5.0 player position is unsupported in the current WiiXLaunch
-`botw.player` surface.** Its `SupportsPosition()` returns false; even though
-WiiXLaunch recognises build 1.5.0, it cannot yet emit reliable Link poses.
-The Java Minecraft world can only follow Zelda when the native guest provides
-its actual state to the existing host bridge. There is currently no real
-Link-to-Minecraft pose feed on that Switch build.
+**The stock WiiXLaunch `botw.player` Switch surface still returns
+`SupportsPosition() == 0`.** BotwCraft now adds an explicit 1.5.0
+fingerprint-locked `PlayerInfo` native reader to the WiiXLaunch host:
+`0x25CDB60` singleton, `0x854BA0` getPlayerUnchecked, and
+`0x854BA8` getPlayerPos, all based on the documented 1.5.0 decompilation.
+It logs `BotwCraft:NATIVE_POSITION_MILLI`, which the existing Windows relay
+parses into real SkyCraft poses. **This code is built and guarded but has not
+yet been run in Ryujinx**; it may require additional game-thread validation.
 
 **Projection currently uses Minecraft's pose, NOT Zelda's view-projection and
 depth buffer.** A rendered block will be part of the native Zelda NVN frame,
@@ -59,8 +61,8 @@ must still be verified in an actual emulator session.
 
 The needed next steps are:
 
-- Resolve/validate the Link player singleton and transform on Switch 1.5.0;
-  do not reuse any 1.0.0 or Wii U address.
+- Run-time validate the new 1.5.0 Link PlayerInfo reader in Ryujinx and
+  obtain BOTW's actual camera orientation, not just its position.
 - Feed authoritative Link pose and terrain collision into Fabric, and use
   Minecraft physics to update Link in the game engine.
 - Supply Zelda's actual view-projection/depth matrices to the native renderer,
