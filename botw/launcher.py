@@ -41,10 +41,18 @@ def main():
                 [sys.executable, "-u", str(script), *extra], cwd=ROOT)))
             time.sleep(0.25)
         print("[BotwCraft] Ctrl+C stops only bridge services.", flush=True)
+        warned_mesh = False
         while True:
             for name, proc in processes:
                 code = proc.poll()
                 if code is not None:
+                    if name == "native_mesh_bridge.py":
+                        if not warned_mesh:
+                            print("[BotwCraft] WARNING: mesh rendering process stopped "
+                                  f"(exit {code}). Link log relay and host bridge remain running. "
+                                  "See mesh bridge error above for the real cause.", flush=True)
+                            warned_mesh = True
+                        continue
                     raise RuntimeError(f"{name} exited unexpectedly ({code})")
             time.sleep(0.35)
     except KeyboardInterrupt:
