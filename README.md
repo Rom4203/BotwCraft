@@ -25,11 +25,13 @@ Dependencies are **part of the Git repository** instead of an uncontrolled
   (newer than the BladesawStudios fork's main head).
 - The WiiXLaunch BOTW Switch target contains a *verified 1.5.0
   fingerprint* `0xA982D2BC` and NVN graphics primitives.
-- The same modding API **does not yet support reading or writing the Switch
-  player's real position**. Its `botw.player.SupportsPosition` returns false
-  on Switch, including 1.5.0. A new version/fingerprint alone cannot fix
-  this. The unverified PlayerTick patch is guarded off, rather than causing
-  another emulator crash.
+- The stock modding API still reports `botw.player.SupportsPosition == 0`
+  on Switch. BotwCraft now adds a **fingerprint-locked, native 1.5.0
+  `PlayerInfo` reader** using the decompilation's player singleton and
+  `getPlayerPos` method, and sends actual coordinates to the SkyCraft host
+  relay via Ryujinx logs. The unsafe old PlayerTick patch stays disabled.
+  This source has automated guards and tests but **has not yet been proven
+  in an emulator playtest**.
 
 **Working repository structure:**
 
@@ -39,6 +41,7 @@ protocol/                     byte-compatible SkyCraft v11 shared memory
 WiiXLaunch/                   pinned upstream Switch host (Git submodule)
   vendor/wiixlaunch-botw/     pinned BOTW 1.5.0 support module
 botw/guest_mod/mod.cpp        version-capability-aware native adapter
+botw/patch_botw15_player_pose.py   exact 1.5.0 Link position reader in NVN host
 botw/ryujinx_log_relay.py     actual native position logs -> SkyCraft host
 botw/native_mesh_bridge.py   Minecraft RenderRing -> BOTW native NVN meshes on SD
 botw/native_guest_mesh.hpp   bounded checksummed native vertex packet protocol
@@ -55,8 +58,9 @@ Windows and Linux.
 
 ### Still required for SkyCraft-level gameplay
 
-1. Reverse engineer and verify BOTW **Switch 1.5.0** Link position, movement
-   and camera accessors (currently Cemu/Wii U-only in WiiXLaunch).
+1. Validate the new **Switch 1.5.0 PlayerInfo Link position reader** in a
+   real Ryujinx session, then reverse engineer authoritative movement setter,
+   camera matrices and collision accessors.
 2. Send reliable Link position and terrain collision from the guest to the
    Minecraft shared-memory host; send Minecraft's authoritative state back.
 3. The **native NVN mesh transport is now implemented**: SkyCraft
