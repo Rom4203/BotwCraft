@@ -16,6 +16,7 @@ import os
 from pathlib import Path
 import struct
 import sys
+import tempfile
 import time
 
 MAPPING_NAME = "Local\\SkyCraft_v1"
@@ -179,15 +180,91 @@ def minecraft_heartbeat_is_live(shared, now_ms, max_age_ms=3500):
     mc_stamp = struct.unpack_from("<Q", shared, 0x18)[0]
     return mc_stamp > 0 and 0 <= now_ms - mc_stamp <= max_age_ms
 
-def write_atomic(path: Path, content: bytes):
+def write_atomic(path: Path, content: bytes, retries=3, sleeper=time.sleep):
+    """Publish a complete mesh via a unique temp file in the SAME directory.
+
+    The legacy fixed filename frame.bin.part could be left behind, made a
+    directory, or held open by another process. A unique tempfile avoids
+    collisions with prior attempts and concurrent bridge launches.
+    Windows may temporarily deny os.replace while a reader has an open
+    handle; retry boundedly, never modify permissions or kill the reader.
+    """
+    path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".part")
+    temporary = None
     try:
-        tmp.write_bytes(content)
-        os.replace(tmp, path)
+        fd, name = tempfile.mkstemp(prefix=path.name + ".", suffix=".part",
+                                   dir=str(path.parent))
+        temporary = Path(name)
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(content)
+        for attempt in range(retries + 1):
+            try:
+                os.replace(temporary, path)
+                temporary = None
+                return
+            except PermissionError:
+                if attempt == retries:
+                    raise
+                sleeper(min(.06 * (2 ** attempt), .30))
     finally:
-        if tmp.exists():
-            tmp.unlink()
+        if temporary is not None:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
+def describe_write_failure(path: Path, exc: OSError) -> str:
+    """Report relevant clues, without guessing which Windows ACL denied access."""
+    legacy = path.with_name(path.name + ".part")
+    clues = [f"{type(exc).__name__}: {exc}"]
+    if legacy.is_dir():
+        clues.append(f"old fixed-name temporary path is a DIRECTORY: {legacy}")
+    elif legacy.exists():
+        clues.append(f"old fixed-name temporary path remains: {legacy}")
+    if path.is_dir():
+        clues.append(f"destination is a DIRECTORY, not a file: {path}")
+    if not path.parent.is_dir():
+        clues.append(f"destination parent unavailable: {path.parent}")
+    clues.append("Avoid running the bridge as administrator. Close Ryujinx and "
+                 "other bridge processes and inspect the destination folder ACLs.")
+    return " | ".join(clues)
+
+
+class RecoverableMeshWriter:
+    """An unavailable Ryujinx SD must never terminate the Link telemetry relay."""
+
+    def __init__(self, destination, writer=write_atomic, printer=print,
+                 clock=time.monotonic, report_every=20.0):
+        self.destination = Path(destination)
+        self.writer = writer
+        self.printer = printer
+        self.clock = clock
+        self.report_every = report_every
+        self.failures = 0
+        self.last_report = None
+
+    def write(self, packet) -> bool:
+        try:
+            self.writer(self.destination, packet)
+        except OSError as exc:
+            self.failures += 1
+            now = self.clock()
+            if self.last_report is None or now - self.last_report >= self.report_every:
+                self.last_report = now
+                self.printer("[BotwCraft] WARNING: native mesh output unavailable; "
+                             "Link telemetry and Minecraft bridge continue. "
+                             + describe_write_failure(self.destination, exc),
+                             flush=True)
+            return False
+        if self.failures:
+            self.printer("[BotwCraft] Native mesh output is writable again: "
+                         + str(self.destination), flush=True)
+            self.failures = 0
+            self.last_report = None
+        return True
+
 
 def resolve_sd_root(override=None):
     if override or os.environ.get("BOTWCRAFT_SDROOT"):
@@ -209,6 +286,7 @@ def run(sd_root, hz=8):
     sections = {}
     last_mesh = -1
     frame = 1
+    writer = RecoverableMeshWriter(destination)
     print("[BotwCraft] Native NVN mesh bridge:", destination, flush=True)
     print("[BotwCraft] This reads actual MC world meshes; "
           "BOTW 1.5 Link/camera sync still requires game reverse engineering.",
@@ -236,7 +314,7 @@ def run(sd_root, hz=8):
                 vertex_list = sections_to_mesh(sections, pose) if pose else []
                 content = encode_mesh(frame, vertex_list)
                 # Send new frames even when empty so native game clears stale blocks.
-                write_atomic(destination, content)
+                writer.write(content)
                 if (frame % (hz * 10)) == 1 and frame > 1:
                     print(f"[BotwCraft] Native mesh: {len(vertex_list)//3} triangles, "
                           f"{len(sections)} Minecraft sections", flush=True)
@@ -246,8 +324,10 @@ def run(sd_root, hz=8):
         pass
     finally:
         # Explicitly clear triangles; previous renderer frames can't survive.
-        write_atomic(destination, encode_mesh((frame + 1) & 0xffffffff, []))
-        memory.close()
+        try:
+            writer.write(encode_mesh((frame + 1) & 0xffffffff, []))
+        finally:
+            memory.close()
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
