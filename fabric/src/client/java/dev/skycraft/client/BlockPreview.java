@@ -69,6 +69,13 @@ public final class BlockPreview {
                 }
             }
             initializedPlayer = playerId;
+            var player = server.getPlayerList().getPlayer(playerId);
+            if (player != null && placed > 0) {
+                // A new void mirror world otherwise spawns the player far
+                // below the test island, into the void. Place him above it.
+                player.teleportTo(0.5, 80.0, 0.5);
+                player.resetFallDistance();
+            }
             SkyCraft.LOG.info("BotwCraft block preview: {} starter blocks created", placed);
             } finally {
                 pendingPlayer = null; // retry next tick if server/player was not ready
