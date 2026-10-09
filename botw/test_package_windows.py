@@ -14,12 +14,14 @@ class PackageTests(unittest.TestCase):
             "fabric/build/libs/skycraft-0.1.2.jar",
             "botw/host_bridge.py",
             "botw/ryujinx_log_relay.py",
+            "botw/start_ryujinx_logged.py",
             "botw/control_bridge.py",
             "botw/native_mesh_bridge.py",
             "botw/hud_overlay.py",
             "botw/launcher.py",
             "botw/prism_discovery.py",
             "packaging/START_BRIDGE.bat",
+            "packaging/START_RYUJINX_LOGGED.bat",
             "packaging/INSTALL_NATIVE_TEST.bat",
             "botw/install_native.py",
             "botw/install_native_mc.py",
@@ -45,11 +47,13 @@ class PackageTests(unittest.TestCase):
             with zipfile.ZipFile(out) as archive:
                 files = archive.namelist()
                 self.assertEqual(archive.testzip(), None)
-                self.assertEqual(len(files), 22)
+                self.assertEqual(len(files), 24)
                 self.assertTrue(any(p.endswith("/exefs/subsdk9") for p in files))
                 self.assertIn("ryujinx_sdcard/WiiXLaunch/mods/01007EF00011E000/botwcraft.wxlm", files)
                 self.assertIn("minecraft_mods/skycraft-0.1.2.jar", files)
                 self.assertIn("START_BRIDGE.bat", files)
+                self.assertIn("START_RYUJINX_LOGGED.bat", files)
+                self.assertIn("bridge/start_ryujinx_logged.py", files)
                 self.assertIn("INSTALL_NATIVE_TEST.bat", files)
                 self.assertIn("install_native.py", files)
                 self.assertIn("install_native_mc.py", files)
