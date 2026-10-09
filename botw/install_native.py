@@ -120,7 +120,9 @@ def install(bundle, ryujinx_root, backup_root=None):
     print("[BotwCraft] Module natif 1.5.0 installé :")
     print("  ExeFS:", new_exefs)
     print("  RomFS (fallback quand la SD est inaccessible):", new_romfs_guest)
-    print("  SD   :", guest)\n    print("  ROMFS BWC1 probe (at boot):", new_romfs_probe)\n    print("[BotwCraft] ROMFS live file updates still require Ryujinx validation.")
+    print("  SD   :", guest)
+    print("  ROMFS BWC1 probe (at boot):", new_romfs_probe)
+    print("[BotwCraft] ROMFS live file updates still require Ryujinx validation.")
     print("[BotwCraft] Aucune sauvegarde Zelda modifiée.")
     print("[BotwCraft] Le lancement et le fonctionnement en jeu restent à vérifier.")
     return new_exefs, guest
