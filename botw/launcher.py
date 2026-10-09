@@ -11,9 +11,9 @@ import sys
 import time
 
 try:
-    from .prism_discovery import locate_prism, prism_data_dir
+    from .prism_discovery import locate_prism, prism_data_dir, prism_instance_dir, prism_minecraft_dir
 except ImportError:  # Standalone ZIP bridge/launcher.py
-    from prism_discovery import locate_prism, prism_data_dir
+    from prism_discovery import locate_prism, prism_data_dir, prism_instance_dir, prism_minecraft_dir
 
 ROOT = Path(__file__).resolve().parent
 
@@ -23,7 +23,8 @@ def inspect_prism_instance(profile):
         if not file.is_file():
             raise RuntimeError(f"Prism instance incomplete or absent: {file}; "
                                "re-run INSTALL_NATIVE_TEST.bat")
-    mods = profile / ".minecraft" / "mods"
+    game_dir = prism_minecraft_dir(profile)
+    mods = game_dir / "mods"
     if not list(mods.glob("skycraft-*.jar")):
         raise RuntimeError(f"Minecraft SkyCraft mod missing from {mods}; "
                            "re-run INSTALL_NATIVE_TEST.bat")
@@ -32,7 +33,7 @@ def inspect_prism_instance(profile):
 
 
 def minecraft_started(profile, after):
-    latest = profile / ".minecraft" / "logs" / "latest.log"
+    latest = prism_minecraft_dir(profile) / "logs" / "latest.log"
     try:
         return latest.is_file() and latest.stat().st_mtime >= after - 3
     except OSError:
@@ -45,10 +46,21 @@ def start_minecraft(preview_blocks=False):
         raise RuntimeError("Prism Launcher introuvable : selectionne prismlauncher.exe")
     data_dir = prism_data_dir(prism)
     profile_name = "BotwCraftPreview" if preview_blocks else "BotwCraftNative"
-    profile = data_dir / "instances" / profile_name
+    profile = prism_instance_dir(data_dir, profile_name)
     inspect_prism_instance(profile)
     env = os.environ.copy()
     opts = env.get("JAVA_TOOL_OPTIONS", "")
+    if not preview_blocks:
+        # A previously launched preview may have left this JVM property in the environment.
+        opts = " ".join(part for part in opts.split()
+                        if not part.startswith("-Dbotwcraft.experimentalBlocks="))
+        cfg = (profile / "instance.cfg").read_text(encoding="utf-8", errors="replace")
+        if "-Dbotwcraft.experimentalBlocks=true" in cfg:
+            raise RuntimeError("Native Prism profile still enables experimentalBlocks=true. "
+                               "Re-run INSTALL_NATIVE_TEST.bat from the updated build.")
+        marker = prism_minecraft_dir(profile) / "botwcraft.preview"
+        if marker.is_file():
+            raise RuntimeError(f"Native profile has preview marker: {marker}")
     if preview_blocks:
         opts += " -Dbotwcraft.experimentalBlocks=true"
     opts += (" -Dskycraft.startHidden=false -Dskycraft.showWindow=true"
@@ -56,6 +68,7 @@ def start_minecraft(preview_blocks=False):
     env["JAVA_TOOL_OPTIONS"] = opts.strip()
     print(f"[BotwCraft] Prism: {prism}", flush=True)
     print(f"[BotwCraft] Instance: {profile}", flush=True)
+    print(f"[BotwCraft] Minecraft game directory: {prism_minecraft_dir(profile)}", flush=True)
     print(f"[BotwCraft] Command: --dir {data_dir} --launch {profile_name}", flush=True)
     start_time = time.time()
     process = subprocess.Popen([str(prism), "--dir", str(data_dir),
@@ -110,7 +123,7 @@ def main():
                 mc_warned = True
                 print("[BotwCraft] WARNING: Prism started, but Minecraft launch was not confirmed.", flush=True)
                 print("[BotwCraft] Open Prism, double-click BotwCraftNative and check its console.", flush=True)
-                print(f"[BotwCraft] Minecraft log: {profile / '.minecraft' / 'logs' / 'latest.log'}", flush=True)
+                print(f"[BotwCraft] Minecraft log: {prism_minecraft_dir(profile) / 'logs' / 'latest.log'}", flush=True)
             if minecraft.poll() not in (None, 0):
                 raise RuntimeError(f"Prism exited with an error ({minecraft.returncode})")
             for name, proc in processes:
