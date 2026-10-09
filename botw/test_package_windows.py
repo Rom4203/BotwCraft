@@ -45,7 +45,7 @@ class PackageTests(unittest.TestCase):
             with zipfile.ZipFile(out) as archive:
                 files = archive.namelist()
                 self.assertEqual(archive.testzip(), None)
-                self.assertEqual(len(files), 21)
+                self.assertEqual(len(files), 22)
                 self.assertTrue(any(p.endswith("/exefs/subsdk9") for p in files))
                 self.assertIn("ryujinx_sdcard/WiiXLaunch/mods/01007EF00011E000/botwcraft.wxlm", files)
                 self.assertIn("minecraft_mods/skycraft-0.1.2.jar", files)
@@ -54,7 +54,9 @@ class PackageTests(unittest.TestCase):
                 self.assertIn("install_native.py", files)
                 self.assertIn("install_native_mc.py", files)
                 self.assertIn("prism_template/mmc-pack.json", files)
-                self.assertFalse(any("/romfs/WiiXLaunch/" in p for p in files))
+                self.assertIn(
+                    "ryujinx_mods/contents/01007ef00011e000/BotwCraft/romfs/WiiXLaunch/mods/botwcraft.wxlm",
+                    files)
                 self.assertIn("bridge/control_bridge.py", files)
                 self.assertIn("bridge/native_mesh_bridge.py", files)
                 self.assertIn("bridge/hud_overlay.py", files)
