@@ -108,10 +108,12 @@ namespace {
         // triangle-probe camera with Hyrule coordinates.
         const auto* worldHeader =
             reinterpret_cast<const BotwCraftWorld::Header*>(gWorldPacket);
-        if (gZeldaViewProjection.ready &&
-            worldHeader->magic == BotwCraftWorld::kMagic &&
+        if (worldHeader->magic == BotwCraftWorld::kMagic &&
             worldHeader->vertexCount > 0 &&
             worldHeader->vertexCount <= BotwCraftWorld::kMaxVertices) {
+            // World space is authoritative. Do not draw the old 2D probe
+            // if a BWC2 scene exists but Zelda's camera is not ready.
+            if (!gZeldaViewProjection.ready) return;
             const size_t length = sizeof(BotwCraftWorld::Header) +
                 size_t(worldHeader->vertexCount) * sizeof(BotwCraftWorld::Vertex);
             if (BotwCraftWorld::Valid(gWorldPacket, length)) {
