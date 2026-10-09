@@ -94,7 +94,7 @@ def select_executable_gui():
         finally:
             app.destroy()
         return Path(selected) if selected else None
-    except (ImportError, OSError, RuntimeError, tk.TclError) as exc:
+    except Exception as exc:
         print("[BotwCraft] File picker unavailable:", exc, flush=True)
         return None
 
