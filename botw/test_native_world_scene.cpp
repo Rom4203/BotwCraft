@@ -46,6 +46,28 @@ int main() {
     assert(std::fabs(out.b-192.f/255.f)<.001f);
     assert(out.a == 1.f);
 
+    // Full 3D Zelda camera basis: the same Hyrule world point stays fixed
+    // as camera moves, and is transformed on the NATIVE frame thread.
+    float eye[3]={1.f,2.f,3.f};
+    float at[3]={1.f,2.f,4.f};
+    float up[3]={0.f,1.f,0.f};
+    ViewProjection realCamera{};
+    assert(BuildViewProjection(eye,at,up,1.0f,1.0f,0.1f,100.f,realCamera));
+    Vertex worldPoint={1.f,2.f,8.f,.5f,.5f,0xffffffff,0,0};
+    ClipVertex worldClip{};
+    assert(Project(realCamera,worldPoint,worldClip));
+    assert(std::fabs(worldClip.x)<.001f);
+    assert(std::fabs(worldClip.y)<.001f);
+    assert(std::fabs(worldClip.w-5.f)<.001f);
+    assert(worldClip.z>0.1f && worldClip.z<worldClip.w);
+    eye[0] += 2.f;
+    at[0] += 2.f;
+    assert(BuildViewProjection(eye,at,up,1.0f,1.0f,0.1f,100.f,realCamera));
+    assert(Project(realCamera,worldPoint,worldClip));
+    assert(worldClip.x < -1.f);
+    assert(!BuildViewProjection(eye,at,up,-1.f,1.f,0.1f,100.f,realCamera));
+    assert(!realCamera.ready);
+
     // Corrupt textures or a truncated stream MUST NOT reach graphics.
     bytes[sizeof(Header)+5] ^= 0x1;
     assert(!Valid(bytes,sizeof(Header)+3*sizeof(Vertex)));
