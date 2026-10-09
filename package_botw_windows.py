@@ -28,7 +28,6 @@ def find_minecraft_jar(root):
 
 def archive_manifest(root):
     guest_options = (
-        root / "mod" / "botw" / "guest_mod" / "build" / "switch-mods" / "botwcraft.wxlm",
         root / "botw" / "guest_mod" / "build" / "switch-mods" / "botwcraft.wxlm",
     )
     guest = next((p for p in guest_options if p.is_file()), None)
