@@ -1,32 +1,27 @@
 @echo off
 setlocal EnableExtensions
 cd /d "%~dp0"
-set "PY=D:\Program Files\Python\python.exe"
-if not exist "%PY%" (
-  where py >nul 2>&1
-  if not errorlevel 1 (
-    set "PY=py -3"
-  ) else (
-    set "PY=python"
-  )
+echo.
+echo BOTWCRAFT - INSTALLATION DU MOD NATIF EXPERIMENTAL SWITCH 1.5.0
+echo ====================================================================
+echo Sauvegarde les parties Zelda avant le test.
+echo Cette installation n'active PAS les hooks natifs sur BOTW 1.6.0.
+echo.
+if exist "D:\Program Files\Python\python.exe" (
+ "D:\Program Files\Python\python.exe" "install_native.py"
+) else (
+ where py >nul 2>&1
+ if not errorlevel 1 (
+  py -3 "install_native.py"
+ ) else (
+  python "install_native.py"
+ )
 )
-echo.
-echo BOTWCRAFT - INSTALLATION DU MOD NATIF SWITCH 1.5.0
-echo --------------------------------------------------
-echo Sauvegarde tes parties Zelda avant tout essai.
-echo Aucun module de version 1.0.0 ne doit rester actif.
-echo Les fichiers sont copies dans ExeFS ET la SD virtuelle de Ryujinx.
-echo.
-%PY% "install_native.py"
 if errorlevel 1 (
-  echo [ECHEC] Installation interrompue; regarde l'erreur ci-dessus.
-  pause
-  exit /b 1
+ echo [BotwCraft] ECHEC installation. Voir le message ci-dessus.
+ pause
+ exit /b 1
 )
 echo.
-echo Modules copies. Cette compilation est un essai technique,
-echo PAS un Minecraft jouable confirme.
-echo.
-echo Lance ensuite START_BRIDGE.bat dans ce dossier,
-echo puis BOTW Switch 1.5.0 dans Ryujinx.
+echo Installation terminee. Lance START_BRIDGE.bat puis Zelda.
 pause
