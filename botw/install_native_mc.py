@@ -10,10 +10,10 @@ from pathlib import Path
 import shutil
 
 try:
-    from .prism_discovery import locate_prism, prism_data_dir
+    from .prism_discovery import locate_prism, prism_data_dir, prism_instance_dir, prism_minecraft_dir
     from .install_preview import download_fabric_api
 except ImportError:
-    from prism_discovery import locate_prism, prism_data_dir
+    from prism_discovery import locate_prism, prism_data_dir, prism_instance_dir, prism_minecraft_dir
     from install_preview import download_fabric_api
 
 NATIVE_NAME = "BotwCraftNative"
@@ -22,6 +22,7 @@ JAVA_FLAGS = (
     "-Dskycraft.quitWithSkyrim=false",
     "-Dskycraft.startHidden=false",
     "-Dskycraft.showWindow=true",
+    "-Dbotwcraft.experimentalBlocks=false",
 )
 
 
@@ -77,7 +78,7 @@ def install_native_minecraft(bundle, prism=None, skip_fabric_download=False):
         raise FileNotFoundError("Prism template mmc-pack.json missing")
     if not (template / "instance.cfg").is_file():
         raise FileNotFoundError("Prism template instance.cfg missing")
-    profile = data_dir / "instances" / NATIVE_NAME
+    profile = prism_instance_dir(data_dir, NATIVE_NAME)
     profile.mkdir(parents=True, exist_ok=True)
     cfg_file = profile / "instance.cfg"
     initial = (cfg_file.read_text(encoding="utf-8") if cfg_file.exists()
@@ -88,12 +89,14 @@ def install_native_minecraft(bundle, prism=None, skip_fabric_download=False):
     pack = profile / "mmc-pack.json"
     if not pack.exists():
         shutil.copy2(template / "mmc-pack.json", pack)
-    game_dir = profile / ".minecraft"
+    game_dir = prism_minecraft_dir(profile)
     game_dir.mkdir(exist_ok=True)
     # A leftover preview marker would turn this into the rejected sandbox.
     preview_marker = game_dir / "botwcraft.preview"
     if preview_marker.exists():
-        raise RuntimeError("BotwCraftNative has a preview marker; refusing native launch")
+        raise RuntimeError(f"BotwCraftNative contains a preview-only marker: {preview_marker}. "
+                           "Remove it only if this really is the native instance.")
+    print(f"[BotwCraft] Actual Minecraft game directory: {game_dir}", flush=True)
     mods = game_dir / "mods"
     mods.mkdir(exist_ok=True)
     for old in mods.glob("skycraft-*.jar"):
