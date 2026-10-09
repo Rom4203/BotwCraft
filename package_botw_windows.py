@@ -44,6 +44,7 @@ def archive_manifest(root):
         "bridge/control_bridge.py": root / "botw" / "control_bridge.py",
         "bridge/hud_overlay.py": root / "botw" / "hud_overlay.py",
         "bridge/launcher.py": root / "botw" / "launcher.py",
+        "bridge/prism_discovery.py": root / "botw" / "prism_discovery.py",
         "START_BRIDGE.bat": root / "packaging" / "START_BRIDGE.bat",
         "PREVIEW_BLOCKS.bat": root / "packaging" / "PREVIEW_BLOCKS.bat",
         "README_INSTALL.txt": root / "packaging" / "README_INSTALL.txt",
