@@ -1,0 +1,72 @@
+name: BOTW Switch ARM64 real build
+on:
+  workflow_dispatch:
+  push:
+    branches: [botw-ryujinx-development]
+    paths:
+      - '.github/workflows/botw-switch-build.yml'
+      - 'botw/guest_mod/**'
+      - 'botw/patch_botw15_player_pose.py'
+      - 'botw/guard_switch_player_hook.py'
+      - 'botw/native_guest_mesh.hpp'
+      - 'botw/setup_wiixlaunch.py'
+      - 'WiiXLaunch'
+      - 'build_botw_windows.bat'
+  pull_request:
+    paths:
+      - '.github/workflows/botw-switch-build.yml'
+      - 'botw/guest_mod/**'
+      - 'botw/patch_botw15_player_pose.py'
+      - 'botw/guard_switch_player_hook.py'
+      - 'botw/native_guest_mesh.hpp'
+      - 'botw/setup_wiixlaunch.py'
+jobs:
+  switch-aarch64:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Check out exact WiiXLaunch and BOTW module
+        run: python botw/setup_wiixlaunch.py
+      - name: Guard invalid game hooks
+        run: python botw/guard_switch_player_hook.py
+      - name: Apply Switch 1.5.0 Link pose reader
+        run: python botw/patch_botw15_player_pose.py
+      - name: Cross-compile the REAL Switch subsdk9 and guest wxlm
+        run: |
+          docker run --rm \
+            -v "$PWD:/work" -w /work \
+            -e WIIXL_TARGET=botw \
+            devkitpro/devkita64:20260219 \
+            bash -euc '
+              export DEVKITPRO=/opt/devkitpro
+              export DEVKITA64=/opt/devkitpro/devkitA64
+              export PATH="$DEVKITPRO/tools/bin:$PATH"
+              echo "=== devkitA64 Switch host ==="
+              cd WiiXLaunch
+              bash build_switch.sh
+              echo "=== devkitA64 Switch guest ==="
+              python3 sdk/scripts/build_mod.py \
+                --source ../botw/guest_mod \
+                --target switch \
+                --out ../botw/guest_mod/build
+            '
+      - name: Verify nonempty Nintendo-free mod artifacts
+        run: |
+          test -s WiiXLaunch/build/switch/subsdk9
+          test -s botw/guest_mod/build/switch-mods/botwcraft.wxlm
+          file WiiXLaunch/build/switch/subsdk9 botw/guest_mod/build/switch-mods/botwcraft.wxlm
+          sha256sum WiiXLaunch/build/switch/subsdk9 botw/guest_mod/build/switch-mods/botwcraft.wxlm
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: BotwCraft-Native-Switch-15-unverified-runtime
+          path: |
+            WiiXLaunch/build/switch/subsdk9
+            botw/guest_mod/build/switch-mods/botwcraft.wxlm
+          if-no-files-found: error
