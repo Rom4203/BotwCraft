@@ -18,6 +18,7 @@ class PackageTests(unittest.TestCase):
             "botw/hud_overlay.py",
             "botw/launcher.py",
             "packaging/START_BRIDGE.bat",
+            "packaging/PREVIEW_BLOCKS.bat",
             "packaging/README_INSTALL.txt",
             "THIRD-PARTY-NOTICES.md",
             "LICENSE",
@@ -36,11 +37,12 @@ class PackageTests(unittest.TestCase):
             with zipfile.ZipFile(out) as archive:
                 files = archive.namelist()
                 self.assertEqual(archive.testzip(), None)
-                self.assertEqual(len(files), 12)
+                self.assertEqual(len(files), 13)
                 self.assertTrue(any(p.endswith("/exefs/subsdk9") for p in files))
                 self.assertTrue(any(p.endswith("/mods/botwcraft.wxlm") for p in files))
                 self.assertIn("minecraft_mods/skycraft-0.1.2.jar", files)
                 self.assertIn("START_BRIDGE.bat", files)
+                self.assertIn("PREVIEW_BLOCKS.bat", files)
                 self.assertIn("bridge/control_bridge.py", files)
                 self.assertIn("bridge/hud_overlay.py", files)
                 self.assertIn("bridge/launcher.py", files)
