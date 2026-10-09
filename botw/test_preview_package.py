@@ -14,6 +14,7 @@ CONTENTS = (
     "botw/control_bridge.py",
     "botw/hud_overlay.py",
     "botw/launcher.py",
+    "botw/prism_discovery.py",
     "packaging/INSTALL_AND_PREVIEW.bat",
     "packaging/PREVIEW_BLOCKS.bat",
     "botw/install_preview.py",
@@ -43,7 +44,9 @@ class Tests(unittest.TestCase):
             with zipfile.ZipFile(result) as archive:
                 self.assertIsNone(archive.testzip())
                 names = archive.namelist()
-                self.assertEqual(len(names), len(CONTENTS))
+                self.assertEqual(len(names), len(CONTENTS) + 1)
+                self.assertIn("prism_discovery.py", names)
+                self.assertIn("bridge/prism_discovery.py", names)
                 self.assertIn("minecraft_mods/skycraft-0.1.2.jar", names)
                 self.assertIn("INSTALL_AND_PREVIEW.bat", names)
                 self.assertFalse(any("subsdk9" in n or "botwcraft.wxlm" in n for n in names))
