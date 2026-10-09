@@ -68,15 +68,18 @@ public final class SkyClient {
 
 	/** Start of Minecraft.runTick: pull state and input from Skyrim before anything else runs. */
 	public static void beginFrame() {
-		SkyLink.poll();
-		quitWithSkyrim(Minecraft.getInstance());
-		if (START_HIDDEN && !BlockPreview.enabled() && !startedHidden) {
-			startedHidden = true;
-			Minecraft minecraft = Minecraft.getInstance();
-			hideWindowOnce(minecraft);
-			minecraft.options.getSoundSourceOptionInstance(net.minecraft.sounds.SoundSource.MUSIC).set(0.0);
-			minecraft.getMusicManager().stopPlaying();
+		if (!BotwCraftSession.requested()) {
+			// No background connection and no game/window changes before the command.
+			if (linked) {
+				InputBridge.releaseAll();
+			}
+			linked = false;
+			tookOver = false;
+			unlinkedHold = null;
+			holdPos = null;
+			return;
 		}
+		SkyLink.poll();
 		boolean nowLinked = SkyLink.active();
 		if (nowLinked) {
 			SkyLink.readSkyState(sky); // on a torn read we simply keep last frame's state
@@ -91,7 +94,7 @@ public final class SkyClient {
 				tookOver = true;
 				unlinkedHold = null;
 				SkyCollision.startConsumer();
-				applyLinkedOptions();
+				// Never override Minecraft graphics, input preferences or window settings.
 			} else {
 				InputBridge.releaseAll();
 				LocalPlayer player = Minecraft.getInstance().player;
@@ -99,20 +102,12 @@ public final class SkyClient {
 			}
 		}
 		if (!linked) {
-			// BotwCraft's standalone preview must open Minecraft's creative
-			// mirror world even if no Zelda bridge is available yet.
-			// This is NOT a verified native BOTW connection.
-			if (BlockPreview.enabled()) {
-				Minecraft preview = Minecraft.getInstance();
-				MirrorWorld.openWhenReady(preview);
-				BlockPreview.tick(preview);
-			}
+			// A waiting /botwcraft connect does not open a world or invent Link data.
 			return;
 		}
 
 		Minecraft minecraft = Minecraft.getInstance();
-		hideWindowOnce(minecraft);
-		applyViewportSize(minecraft);
+		// Keep Minecraft visible; never resize or hide its window.
 		MirrorWorld.openWhenReady(minecraft);
 		BlockPreview.tick(minecraft);
 
@@ -199,6 +194,9 @@ public final class SkyClient {
 
 	/** Called at the end of every client tick. */
 	public static void clientTick(Minecraft minecraft) {
+		if (!BotwCraftSession.requested()) {
+			return;
+		}
 		MirrorWorld.tick(minecraft);
 		DiscordPresence.tick(minecraft);
 		SkyDigClient.tick(minecraft);
@@ -352,7 +350,7 @@ public final class SkyClient {
 
 	/** After GameRenderer.render(): report the player to Skyrim and ship the overlay frame. */
 	public static void afterRender() {
-		if (!linked) {
+		if (!BotwCraftSession.requested() || !linked) {
 			return;
 		}
 		Minecraft minecraft = Minecraft.getInstance();
