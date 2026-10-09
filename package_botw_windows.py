@@ -50,7 +50,7 @@ def archive_manifest(root):
         "INSTALL_NATIVE_TEST.bat": root / "packaging" / "INSTALL_NATIVE_TEST.bat",
         "install_native.py": root / "botw" / "install_native.py",
         "START_BRIDGE.bat": root / "packaging" / "START_BRIDGE.bat",
-        "PREVIEW_BLOCKS.bat": root / "packaging" / "PREVIEW_BLOCKS.bat",
+
         "README_INSTALL.txt": root / "packaging" / "README_INSTALL.txt",
         "THIRD-PARTY-NOTICES.md": root / "THIRD-PARTY-NOTICES.md",
         "LICENSE": root / "LICENSE",
@@ -83,7 +83,7 @@ def build_zip(out, root=ROOT):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output", type=Path, default=ROOT / "dist" / "BotwCraft-experimental.zip")
+    parser.add_argument("--output", type=Path, default=ROOT / "dist" / "BotwCraft-Switch-15-test.zip")
     args = parser.parse_args()
     try:
         build_zip(args.output)
