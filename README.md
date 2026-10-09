@@ -40,6 +40,8 @@ WiiXLaunch/                   pinned upstream Switch host (Git submodule)
   vendor/wiixlaunch-botw/     pinned BOTW 1.5.0 support module
 botw/guest_mod/mod.cpp        version-capability-aware native adapter
 botw/ryujinx_log_relay.py     actual native position logs -> SkyCraft host
+botw/native_mesh_bridge.py   Minecraft RenderRing -> BOTW native NVN meshes on SD
+botw/native_guest_mesh.hpp   bounded checksummed native vertex packet protocol
 botw/setup_wiixlaunch.py     safe pinned source installation
 ```
 
@@ -57,9 +59,12 @@ Windows and Linux.
    and camera accessors (currently Cemu/Wii U-only in WiiXLaunch).
 2. Send reliable Link position and terrain collision from the guest to the
    Minecraft shared-memory host; send Minecraft's authoritative state back.
-3. Render Minecraft mesh data *inside* the NVN game renderer, depth-tested
-   against Zelda's world, rather than in a Windows overlay.
-4. Test on a real BOTW 1.5.0 Ryujinx session before publishing a playable ZIP.
+3. The **native NVN mesh transport is now implemented**: SkyCraft
+   RenderRing → Windows SD-bridge → checksummed BWC1 packets → BOTW Switch NVN
+   DrawMesh callback. The next step is to replace its provisional Minecraft
+   camera projection with Zelda's actual camera/depth buffer and texture atlas.
+4. Test the native SD mount, GPU draw, collision and Link sync in a real
+   BOTW 1.5.0 Ryujinx session before publishing a playable ZIP.
 
 The old `PREVIEW_BLOCKS.bat` experiment remains in the tree for reference
 only. **It is not the intended game port** and should not be confused with
@@ -73,7 +78,8 @@ the native mod described above.
 4. The result is `dist/BotwCraft-experimental.zip`. It includes the native BOTW host/guest modules, the Minecraft Fabric JAR and a Windows launcher for the read-only bridge.
 5. **Do not install as a playable release.** The native movement, block renderer and real BOTW/Minecraft sync remain to be implemented.
 
-Read [the prototype design](docs/BOTW_PROTOTYPE.md), [BOTW API status](docs/BOTW_MOD_API.md) and [the local bridge protocol](docs/HOST_BRIDGE.md).
+Read [the native render bridge](docs/BOTW_NATIVE_MESH_BRIDGE.md),
+[the prototype design](docs/BOTW_PROTOTYPE.md), [BOTW API status](docs/BOTW_MOD_API.md) and [the local bridge protocol](docs/HOST_BRIDGE.md).
 
 ## Upstream attribution
 
