@@ -40,13 +40,10 @@ class NativeInstallerTests(unittest.TestCase):
                  "BotwCraft" / "romfs" / "WiiXLaunch" / "mods" / "botwcraft.wxlm")
         self.assertTrue(romfs.is_file())
         self.assertEqual(romfs.read_bytes(), guest.read_bytes())
-        # Game ROMFS is mounted even where Switch debug SD access is denied.
+        # Never install an unvalidated guest ROMFS frame reader probe.
+        # Ryujinx 1.3.3 aborted while reading it during NVN callback.
         mesh = romfs.parent / "botwcraft" / "frame.bin"
-        self.assertTrue(mesh.is_file())
-        from botw import native_mesh_bridge as native
-        self.assertEqual(mesh.read_bytes(), native.encode_mesh(0, []))
-        self.assertEqual(native.resolve_romfs_output(self.ryujinx / "sdcard"),
-                         mesh)
+        self.assertFalse(mesh.exists())
 
     def test_existing_mods_backup_outside_active_mod_directory(self):
         installed_exe, installed_guest = install_native.install(
