@@ -7,6 +7,7 @@
 // If successful, a safe host->guest live packet transport is still required.
 #include <cstdint>
 #include "../native_guest_mesh.hpp"
+#include "../native_world_scene.hpp"
 #include <wiixlaunch/imports/wiixl_core.h>
 #include <wiixlaunch/imports/botw_player.h>
 #include <wiixlaunch/imports/botw_input.h>
@@ -39,6 +40,16 @@ namespace {
     // GDB halts the guest while writing, so a full packet lands atomically
     // with respect to the NVN frame callback.
     alignas(16) uint8_t gGdbMeshPacket[BotwCraftMesh::kMaxBytes]{};
+    // BWC2: real Hyrule-world coordinates, UV, tint and light. A separate
+    // game-native camera provider must mark the live view/projection ready;
+    // no Minecraft camera is EVER used for this 3D scene.
+    alignas(16) uint8_t gWorldPacket[BotwCraftWorld::kBufferBytes]{};
+    alignas(16) BotwCraftWorld::ViewProjection gZeldaViewProjection{};
+    alignas(16) BotwCraftWorld::ClipVertex
+        gProjectedWorldVertices[BotwCraftWorld::kMaxVertices]{};
+    uint32_t gWorldLastFrame = 0;
+    bool gWorldSeen = false;
+
     uint32_t lastAcceptedMeshFrame = 0;
     uint32_t lastAcceptedMeshVertices = 0;
     bool gdbMeshReady = false;
@@ -91,6 +102,49 @@ namespace {
                     if (Core::Log) Core::Log("BotwCraft:GDB_MESH_FRAME_ACCEPTED");
                 }
                 gdbMeshReady = true;
+            }
+        }
+        // SkyCraft parity channel: project native BWC2 world geometry only
+        // against a REAL game camera view/projection. Do not confuse the old
+        // triangle-probe camera with Hyrule coordinates.
+        const auto* worldHeader =
+            reinterpret_cast<const BotwCraftWorld::Header*>(gWorldPacket);
+        if (gZeldaViewProjection.ready &&
+            worldHeader->magic == BotwCraftWorld::kMagic &&
+            worldHeader->vertexCount > 0 &&
+            worldHeader->vertexCount <= BotwCraftWorld::kMaxVertices) {
+            const size_t length = sizeof(BotwCraftWorld::Header) +
+                size_t(worldHeader->vertexCount) * sizeof(BotwCraftWorld::Vertex);
+            if (BotwCraftWorld::Valid(gWorldPacket, length)) {
+                const auto* worldVertices =
+                    reinterpret_cast<const BotwCraftWorld::Vertex*>(
+                        gWorldPacket + sizeof(BotwCraftWorld::Header));
+                uint32_t projected = 0;
+                // Reject entire triangles crossing the eye/near plane until
+                // the clipper owns them; never make huge turquoise strips.
+                for (uint32_t i = 0; i < worldHeader->vertexCount; i += 3) {
+                    BotwCraftWorld::ClipVertex triangle[3]{};
+                    if (!BotwCraftWorld::Project(gZeldaViewProjection,
+                                                 worldVertices[i], triangle[0]) ||
+                        !BotwCraftWorld::Project(gZeldaViewProjection,
+                                                 worldVertices[i+1], triangle[1]) ||
+                        !BotwCraftWorld::Project(gZeldaViewProjection,
+                                                 worldVertices[i+2], triangle[2]))
+                        continue;
+                    for (unsigned j=0; j<3; ++j)
+                        gProjectedWorldVertices[projected++] = triangle[j];
+                }
+                if (projected) {
+                    vertices =
+                        reinterpret_cast<const float*>(gProjectedWorldVertices);
+                    count = projected;
+                    if (!gWorldSeen || worldHeader->frameId != gWorldLastFrame) {
+                        gWorldLastFrame = worldHeader->frameId;
+                        gWorldSeen = true;
+                        if (Core::Log)
+                            Core::Log("BotwCraft:WORLD_SCENE_3D_ACCEPTED");
+                    }
+                }
             }
         }
         const uint32_t ok = Graphics::DrawMesh(cb, texture, vertices, count);
@@ -167,6 +221,9 @@ extern "C" __attribute__((used)) void WiiXLaunch_ModEntry() {
     LogNativeHex(addressMessage, reinterpret_cast<uintptr_t>(gGdbMeshPacket));
     Log(addressMessage);
     Log("BotwCraft:GDB_MESH_CAPACITY=16416 (32 + 512*32); GDB required");
+    Log("BotwCraft:BWC2_WORLD_BUFFER_AVAILABLE (native world geometry)");
+    Log("BotwCraft:BWC2_WAITING_FOR_ZELDA_CAMERA");
+
     if (Graphics::RegisterDraw && Graphics::DrawMesh) {
         if (Graphics::RegisterDraw(&OnGameDraw)) {
             Log("BotwCraft:VISUAL_PROBE_REGISTERED; awaiting Zelda NVN frames");
