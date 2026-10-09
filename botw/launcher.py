@@ -32,7 +32,9 @@ def start_minecraft(preview_blocks=False):
             f"{data_dir}. Relance INSTALL_AND_PREVIEW.bat.")
     env = os.environ.copy()
     opts = env.get("JAVA_TOOL_OPTIONS", "")
-    opts += " -Dbotwcraft.experimentalBlocks=true -Dskycraft.startHidden=true"
+    opts += (" -Dbotwcraft.experimentalBlocks=true"
+             " -Dskycraft.startHidden=false -Dskycraft.showWindow=true"
+             " -Dskycraft.quitWithSkyrim=false")
     env["JAVA_TOOL_OPTIONS"] = opts.strip()
     print(f"[BotwCraft] Launching Minecraft through {prism}", flush=True)
     return subprocess.Popen(
