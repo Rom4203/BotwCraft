@@ -135,8 +135,14 @@ def install(root, instance_root):
     if not pack.exists():
         shutil.copy2(template / "mmc-pack.json", pack)
 
-    mods = instance_root / ".minecraft" / "mods"
+    game_dir = instance_root / ".minecraft"
+    mods = game_dir / "mods"
     mods.mkdir(parents=True, exist_ok=True)
+    # The Fabric mod detects this sentinel directly in the game's own folder.
+    # It does not depend on Java arguments, Prism overrides, or host-BOTW hooks.
+    marker = game_dir / "botwcraft.preview"
+    if not marker.is_file():
+        marker.write_text("BotwCraft standalone creative preview\\n", encoding="utf-8")
     # Preserve other mods and world saves; update only our SkyCraft-derived JAR.
     for old in mods.glob("skycraft-*.jar"):
         if old.name != jars[0].name:
