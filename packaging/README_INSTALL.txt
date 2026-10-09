@@ -87,3 +87,32 @@ Host output files alone do not prove that the guest SD filesystem is
 mounted. Without a supported live guest-readable channel, no native
 Minecraft mesh rendering is validated. Do not force a mount with
 unverified FS hooks; a previous unsupported path aborted Ryujinx.
+
+CRASH GUARD - BOTW 1.5.0 / RYUJINX 1.3.3 (2026-10-09)
+----------------------------------------------------
+A real Ryujinx crash log confirmed ResultSvcInvalidCurrentMemory (0xD401)
+while the experimental ROMFS Minecraft mesh reader called
+nn::fs::ReadFile on the game's main thread. It crashed ~6 seconds after
+launch. Do NOT reinstall the previous ROMFS diagnostic test.
+
+THIS BUILD:
+* Removes the native WiiXLaunch module's ROMFS/SD frame.bin reader and
+  native mesh draw callback. It DOES NOT render Minecraft blocks inside
+  Zelda. Link pose is still read natively by the WiiXLaunch 1.5.0 host
+  after game startup; the Python log relay forwards those genuine poses.
+* The Python native_mesh_bridge is NOW DIAGNOSTICS-ONLY. It reports
+  Minecraft section/triangle counts and never writes Ryujinx mod files
+  while the game is running. No misleading "writable again" message.
+* Fabric /botwcraft connect remains under user control. Minecraft world
+  export continues even while Zelda is loading: the Windows shared-memory
+  transport being present is no longer confused with having a live
+  Link pose. Minecraft player, mouse and world remain unchanged.
+* The installer stops creating the experimental ROMFS frame.bin. It
+  backs up and replaces ONLY the previous BotwCraft mod directory.
+* Don't run Ryujinx mod ROMFS file updates while the game is running.
+  Ryujinx's modded ROMFS is assembled at launch, not a supported live IPC.
+* A future real-time guest-render transport is a separate development
+  task. Success of Python or ARM64 builds does not prove 3D rendering.
+
+Expected native log: "BotwCraft:MESH_DISABLED"
+Expected Windows log: "Minecraft export: N sections, T projected triangles".
