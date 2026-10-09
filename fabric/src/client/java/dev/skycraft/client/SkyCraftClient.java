@@ -28,7 +28,20 @@ public final class SkyCraftClient implements ClientModInitializer {
 				.then(net.fabricmc.fabric.api.client.command.v2.ClientCommands.literal("status").executes(c -> {
 					c.getSource().sendFeedback(net.minecraft.network.chat.Component.literal(BotwCraftSession.status()));
 					return 1;
-				})));
+				}))
+				.then(net.fabricmc.fabric.api.client.command.v2.ClientCommands.literal("hud")
+					.then(net.fabricmc.fabric.api.client.command.v2.ClientCommands.literal("on").executes(c -> {
+						c.getSource().sendFeedback(net.minecraft.network.chat.Component.literal(BotwCraftSession.setHudEnabled(true)));
+						return 1;
+					}))
+					.then(net.fabricmc.fabric.api.client.command.v2.ClientCommands.literal("off").executes(c -> {
+						c.getSource().sendFeedback(net.minecraft.network.chat.Component.literal(BotwCraftSession.setHudEnabled(false)));
+						return 1;
+					}))
+					.then(net.fabricmc.fabric.api.client.command.v2.ClientCommands.literal("status").executes(c -> {
+						c.getSource().sendFeedback(net.minecraft.network.chat.Component.literal(BotwCraftSession.hudStatus()));
+						return 1;
+					}))));
 		});
 		// Multiplayer without editing files: the host opens their world to LAN (O, Open to LAN) and
 		// e4mc gives them a link; friends type /join <link> in chat, and /leave to come back.
