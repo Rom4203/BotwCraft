@@ -36,7 +36,9 @@ def archive_manifest(root):
     prefix = f"ryujinx_mods/contents/{TARGET}/BotwCraft"
     manifest = {
         f"{prefix}/exefs/subsdk9": root / "WiiXLaunch" / "build" / "switch" / "subsdk9",
-        f"{prefix}/romfs/WiiXLaunch/mods/botwcraft.wxlm": guest,
+        # WiiXLaunch enumerates sd:/WiiXLaunch/mods/<TITLE_ID>/.
+        # Putting the guest into Ryujinx RomFS made it invisible to the loader.
+        f"ryujinx_sdcard/WiiXLaunch/mods/{TARGET.upper()}/botwcraft.wxlm": guest,
         "minecraft_mods/" + find_minecraft_jar(root).name: find_minecraft_jar(root),
         "bridge/host_bridge.py": root / "botw" / "host_bridge.py",
         "bridge/ryujinx_log_relay.py": root / "botw" / "ryujinx_log_relay.py",
@@ -45,6 +47,8 @@ def archive_manifest(root):
         "bridge/hud_overlay.py": root / "botw" / "hud_overlay.py",
         "bridge/launcher.py": root / "botw" / "launcher.py",
         "bridge/prism_discovery.py": root / "botw" / "prism_discovery.py",
+        "INSTALL_NATIVE_TEST.bat": root / "packaging" / "INSTALL_NATIVE_TEST.bat",
+        "install_native.py": root / "botw" / "install_native.py",
         "START_BRIDGE.bat": root / "packaging" / "START_BRIDGE.bat",
         "PREVIEW_BLOCKS.bat": root / "packaging" / "PREVIEW_BLOCKS.bat",
         "README_INSTALL.txt": root / "packaging" / "README_INSTALL.txt",
