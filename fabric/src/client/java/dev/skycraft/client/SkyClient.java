@@ -70,7 +70,7 @@ public final class SkyClient {
 	public static void beginFrame() {
 		SkyLink.poll();
 		quitWithSkyrim(Minecraft.getInstance());
-		if (START_HIDDEN && !startedHidden) {
+		if (START_HIDDEN && !BlockPreview.enabled() && !startedHidden) {
 			startedHidden = true;
 			Minecraft minecraft = Minecraft.getInstance();
 			hideWindowOnce(minecraft);
@@ -414,7 +414,7 @@ public final class SkyClient {
 
 		if ((flags & Proto.MC_IN_WORLD) != 0) {
 			try {
-				if (!Boolean.getBoolean("botwcraft.experimentalBlocks")) {
+				if (!BlockPreview.enabled()) {
 					WorldExporter.frame(minecraft, minecraft.getDeltaTracker().getGameTimeDeltaPartialTick(false));
 				}
 			} catch (RuntimeException e) {
@@ -469,7 +469,7 @@ public final class SkyClient {
 	}
 
 	private static void hideWindowOnce(Minecraft minecraft) {
-		if (windowHidden || SHOW_WINDOW) {
+		if (windowHidden || SHOW_WINDOW || BlockPreview.enabled()) {
 			return;
 		}
 		windowHidden = true;
