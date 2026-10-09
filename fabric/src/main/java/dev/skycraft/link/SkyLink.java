@@ -90,6 +90,11 @@ public final class SkyLink {
 		return tickCount() - beat < HEARTBEAT_TIMEOUT_MS;
 	}
 
+	/** Shared-memory bridge mapped, even if Zelda is loading or has exited. */
+	public static boolean transportOpen() {
+		return shm != null;
+	}
+
 	/** Bumps whenever a (new) Skyrim instance is on the other end: everything Skyrim caches must be resent. */
 	public static int generation() {
 		return generation;
