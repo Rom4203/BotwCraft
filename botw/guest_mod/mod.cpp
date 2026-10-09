@@ -1,9 +1,10 @@
 // BotwCraft native BOTW adapter: real game API only, no synthetic position.
 //
-// Safe BOTW 1.5.0 adapter. The ROMFS frame polling experiment crashed
-// Ryujinx 1.3.3 in nn::fs::ReadFile (0xD401). Never call GameReadFile,
-// register a mesh draw callback or attempt Switch filesystem I/O here.
-// Link's real native pose telemetry remains independent of mesh rendering.
+// BOTW 1.5.0 native diagnostic graphics PROBE, NOT Minecraft rendering.
+// A ROMFS ReadFile inside a draw callback crashed Ryujinx 1.3.3 (0xD401).
+// Draw a single fixed triangle using botw.gfx.DrawMesh, without any fs I/O.
+// This validates native NVN callback and geometry shader separately from IPC.
+// If successful, a safe host->guest live packet transport is still required.
 #include <cstdint>
 #include <wiixlaunch/imports/wiixl_core.h>
 #include <wiixlaunch/imports/botw_player.h>
@@ -25,12 +26,34 @@ WXL_USE_botw_input(SupportsInjection);
 }
 namespace Graphics {
 WXL_USE_botw_gfx(IsGX2);
+WXL_USE_botw_gfx(RegisterDraw);
+WXL_USE_botw_gfx(DrawMesh);
 }
 
 namespace {
     uint32_t frame = 0; // Throttle authentic Link position log from PlayerTick.
-    // Native graphics handoff disabled until a proven live IPC channel exists.
-    // The WiiXLaunch host's own NVN hooks remain under its control.
+    uint32_t drawCallbackCount = 0;
+
+    // Static 3-vertex diagnostic triangle, deliberately NOT Minecraft data.
+    // Layout botw.gfx v1.1: clip (x,y,z,w), then (nx,ny,nz,nw).
+    // Center of screen, moderate size; no Nintendo resources or game pointers.
+    alignas(16) const float kTriangle[3 * 8] = {
+        -0.18f, -0.18f, 0.5f, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f,
+         0.18f, -0.18f, 0.5f, 1.0f, 0.0f, 1.0f, 0.0f, 1.0f,
+         0.00f,  0.18f, 0.5f, 1.0f, 0.0f, 0.0f, 1.0f, 1.0f,
+    };
+
+    void OnGameDraw(uintptr_t cb, uintptr_t texture, int32_t w, int32_t h) {
+        (void)w; (void)h;
+        if (cb == 0 || texture == 0 || !Graphics::DrawMesh) return;
+        const uint32_t ok = Graphics::DrawMesh(cb, texture, kTriangle, 3);
+        ++drawCallbackCount;
+        if (drawCallbackCount == 1 && Core::Log) {
+            Core::Log(ok
+                ? "BotwCraft:VISUAL_PROBE_DRAW_CALLED result=1 vertices=3"
+                : "BotwCraft:VISUAL_PROBE_DRAW_CALLED result=0 vertices=3");
+        }
+    }
 
     void AppendLiteral(char*& ptr, const char* text) {
         while (*text) *ptr++ = *text++;
@@ -86,9 +109,18 @@ namespace {
 
 extern "C" __attribute__((used)) void WiiXLaunch_ModEntry() {
     Log("BotwCraft: native game adapter, strict capabilities; no preview world");
-    // Crash-proof telemetry mode: no native guest filesystem access.
-    Log("BotwCraft:MESH_DISABLED - ROMFS ReadFile caused Ryujinx abort 0xD401; "
-        "native render bridge unvalidated");
+    // No ROMFS, no SD, no sockets and NO live Minecraft mesh packets in this
+    // stage. Only a fixed 3-vertex triangle to isolate the NVN draw capability.
+    Log("BotwCraft:VISUAL_PROBE_ONLY; triangle is NOT Minecraft terrain");
+    if (Graphics::RegisterDraw && Graphics::DrawMesh) {
+        if (Graphics::RegisterDraw(&OnGameDraw)) {
+            Log("BotwCraft:VISUAL_PROBE_REGISTERED; awaiting Zelda NVN frames");
+        } else {
+            Log("BotwCraft:VISUAL_PROBE_REJECTED by native graphics backend");
+        }
+    } else {
+        Log("BotwCraft:VISUAL_PROBE_UNSUPPORTED; NVN drawing imports missing");
+    }
 
     if (!Player::SupportsPosition || Player::SupportsPosition() == 0) {
         Log("BotwCraft: BOTW_NATIVE_UNSUPPORTED: player position API absent");
