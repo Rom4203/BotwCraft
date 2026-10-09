@@ -52,10 +52,18 @@ jobs:
         run: python botw/patch_botw15_player_pose.py
       - name: Cross-compile the REAL Switch subsdk9 and guest wxlm
         run: |
+          # Try Google's verified Docker Hub pull-through cache first.
+          # GitHub's shared runner IPs sometimes hit Docker Hub anonymous limits.
+          image="mirror.gcr.io/devkitpro/devkita64:20260219"
+          if ! docker pull "$image"; then
+            echo "::warning::Public registry mirror cache unavailable; trying upstream Docker Hub"
+            image="devkitpro/devkita64:20260219"
+            docker pull "$image"
+          fi
           docker run --rm \
             -v "$PWD:/work" -w /work \
             -e WIIXL_TARGET=botw \
-            devkitpro/devkita64:20260219 \
+            "$image" \
             bash -euc '
               export DEVKITPRO=/opt/devkitpro
               export DEVKITA64=/opt/devkitpro/devkitA64
