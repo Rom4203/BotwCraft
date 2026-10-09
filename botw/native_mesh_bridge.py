@@ -9,6 +9,7 @@ Hyrule-world transform.
 from __future__ import annotations
 
 import argparse
+import ctypes
 import math
 import mmap
 import os
@@ -173,6 +174,11 @@ def sections_to_mesh(sections, camera, max_vertices=MAX_VERTICES):
                     return triangles
     return triangles
 
+def minecraft_heartbeat_is_live(shared, now_ms, max_age_ms=3500):
+    """Refuse to keep rendering ghost blocks from a disconnected MC instance."""
+    mc_stamp = struct.unpack_from("<Q", shared, 0x18)[0]
+    return mc_stamp > 0 and 0 <= now_ms - mc_stamp <= max_age_ms
+
 def write_atomic(path: Path, content: bytes):
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".part")
@@ -184,8 +190,8 @@ def write_atomic(path: Path, content: bytes):
             tmp.unlink()
 
 def resolve_sd_root(override=None):
-    if override:
-        folder = Path(override).expanduser()
+    if override or os.environ.get("BOTWCRAFT_SDROOT"):
+        folder = Path(override or os.environ["BOTWCRAFT_SDROOT"]).expanduser()
     else:
         appdata = os.environ.get("APPDATA")
         if not appdata:
@@ -207,6 +213,8 @@ def run(sd_root, hz=8):
     print("[BotwCraft] This reads actual MC world meshes; "
           "BOTW 1.5 Link/camera sync still requires game reverse engineering.",
           flush=True)
+    kernel = ctypes.windll.kernel32
+    kernel.GetTickCount64.restype = ctypes.c_uint64
     memory = mmap.mmap(-1, MAPPING_BYTES, tagname=MAPPING_NAME)
     try:
         while True:
@@ -222,7 +230,9 @@ def run(sd_root, hz=8):
                             sections.pop(section_key, None)
                         else:
                             sections[section_key] = data
-                pose = read_minecraft_pose(memory)
+                pose = (read_minecraft_pose(memory)
+                        if minecraft_heartbeat_is_live(
+                            memory, int(kernel.GetTickCount64())) else None)
                 vertex_list = sections_to_mesh(sections, pose) if pose else []
                 content = encode_mesh(frame, vertex_list)
                 # Send new frames even when empty so native game clears stale blocks.
