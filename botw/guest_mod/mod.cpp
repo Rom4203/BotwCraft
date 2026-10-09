@@ -28,6 +28,7 @@ WXL_USE_botw_gfx(IsGX2);
 }
 
 namespace {
+    uint32_t frame = 0; // Throttle authentic Link position log from PlayerTick.
     // Native graphics handoff disabled until a proven live IPC channel exists.
     // The WiiXLaunch host's own NVN hooks remain under its control.
 
