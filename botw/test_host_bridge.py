@@ -116,6 +116,21 @@ class BridgeTests(unittest.TestCase):
                 server.shutdown()
                 worker.join(3)
 
+    def test_creative_preview_requires_explicit_opt_in(self):
+        self.assertFalse(self.bridge.heartbeat())  # Default: no fake BOTW pose.
+        fake_mem = bytearray(0x13000)
+        preview = host_bridge.Bridge(memory=fake_mem, clock=self.clock, preview_blocks=True)
+        self.assertTrue(preview.heartbeat())
+        self.assertEqual(struct.unpack_from("<3d", fake_mem, 0x110),
+                         (0.0, 80.0, 0.0))
+        struct.pack_into("<II3d2f", fake_mem, 0x200,
+                         2, 1, 4.0, 81.0, 8.0, 30.0, 10.0)
+        preview.heartbeat()
+        self.assertEqual(struct.unpack_from("<3d", fake_mem, 0x110),
+                         (4.0, 81.0, 8.0))
+        self.assertEqual(struct.unpack_from("<2f", fake_mem, 0x128),
+                         (30.0, 10.0))
+
     def test_loopback_transport(self):
         with host_bridge.Server(("127.0.0.1", 0), host_bridge.Client) as server:
             server.bridge = self.bridge
