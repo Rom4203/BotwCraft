@@ -26,7 +26,7 @@ class PrismTests(unittest.TestCase):
             exe = root / "prismlauncher.exe"
             exe.write_bytes(b"binary mock")
             (root / "portable.txt").touch()
-            self.assertEqual(locator.prism_data_dir(exe, env={}), root)
+            self.assertEqual(locator.prism_data_dir(exe, env={}), root.resolve())
 
     def test_portable_userdata_has_precedence(self):
         with TemporaryDirectory() as d:
@@ -36,7 +36,7 @@ class PrismTests(unittest.TestCase):
             (root / "portable.txt").touch()
             (root / "UserData").mkdir()
             self.assertEqual(locator.prism_data_dir(exe, env={}),
-                             root / "UserData")
+                             (root / "UserData").resolve())
 
     def test_standard_appdata_profile(self):
         with TemporaryDirectory() as d:
