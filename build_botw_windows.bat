@@ -30,6 +30,9 @@ if not exist "%ROOT%botw\guard_switch_player_hook.py" (
 )
 "%PY%" "%ROOT%botw\guard_switch_player_hook.py"
 if errorlevel 1 goto :failed
+rem Never probe unmounted SD paths: Ryujinx 1.3.3 aborts in nn::fs.
+"%PY%" "%ROOT%botw\guard_switch_fs.py"
+if errorlevel 1 goto :failed
 rem BOTW Switch 1.5.0: sample PlayerInfo via documented native methods,
 rem fingerprint-locked; NO unverified PlayerTick patch is installed.
 "%PY%" "%ROOT%botw\patch_botw15_player_pose.py"
