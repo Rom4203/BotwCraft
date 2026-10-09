@@ -296,31 +296,25 @@ def resolve_romfs_output(sd_root):
 
 
 def run(sd_root, hz=8):
+    """Diagnose Minecraft SkyCraft v11 render packets without touching Ryujinx.
+
+    The guest ROMFS reader caused a verified Ryujinx crash, and the Switch SD
+    mount is rejected. Until there is a supported live host->guest channel,
+    writing frame.bin is neither productive nor safe.
+    """
     if sys.platform != "win32":
         raise RuntimeError("Windows host required")
-    root = resolve_sd_root(sd_root)
-    destination = root / DEFAULT_RELATIVE_PATH
-    sections = {}
-    last_mesh = -1
-    frame = 1
-    writer = RecoverableMeshWriter(destination)
-    romfs = resolve_romfs_output(root)
-    romfs_writer = RecoverableMeshWriter(romfs) if romfs is not None else None
-    print("[BotwCraft] Native NVN mesh bridge (SD):", destination, flush=True)
-    if romfs_writer is None:
-        print("[BotwCraft] ROMFS probe file not installed. "
-              "Re-run INSTALL_NATIVE_TEST.bat with Ryujinx closed.", flush=True)
-    else:
-        print("[BotwCraft] ROMFS experimental mesh output:", romfs, flush=True)
-        print("[BotwCraft] WARNING: Ryujinx may snapshot ROMFS at game boot. "
-              "Writing this file does not establish live Switch mesh delivery.",
-              flush=True)
-    print("[BotwCraft] This reads actual MC world meshes; "
-          "BOTW 1.5 Link/camera sync still requires game reverse engineering.",
+    print("[BotwCraft] Native mesh DIAGNOSTICS ONLY: no SD/ROMFS file writes,",
+          flush=True)
+    print("[BotwCraft] Nintendo Switch mesh renderer is disabled after the",
+          "Ryujinx nn::fs::ReadFile crash. Link telemetry remains active.",
           flush=True)
     kernel = ctypes.windll.kernel32
     kernel.GetTickCount64.restype = ctypes.c_uint64
     memory = mmap.mmap(-1, MAPPING_BYTES, tagname=MAPPING_NAME)
+    sections = {}
+    report_count = 0
+    last_valid_pose = False
     try:
         while True:
             magic, version = struct.unpack_from("<II", memory)
@@ -338,28 +332,22 @@ def run(sd_root, hz=8):
                 pose = (read_minecraft_pose(memory)
                         if minecraft_heartbeat_is_live(
                             memory, int(kernel.GetTickCount64())) else None)
-                vertex_list = sections_to_mesh(sections, pose) if pose else []
-                content = encode_mesh(frame, vertex_list)
-                # Send new frames even when empty so native game clears stale blocks.
-                writer.write(content)
-                if romfs_writer is not None:
-                    romfs_writer.write(content)
-                if (frame % (hz * 10)) == 1 and frame > 1:
-                    print(f"[BotwCraft] Native mesh: {len(vertex_list)//3} triangles, "
-                          f"{len(sections)} Minecraft sections", flush=True)
-                frame = (frame + 1) & 0xffffffff
+                last_valid_pose = pose is not None
+                if report_count % (hz * 10) == 0:
+                    vertex_list = sections_to_mesh(sections, pose) if pose else []
+                    print(
+                        f"[BotwCraft] Minecraft export: {len(sections)} sections, "
+                        f"{len(vertex_list)//3} projected triangles, "
+                        f"pose={'present' if last_valid_pose else 'absent'}. "
+                        "No native injection.",
+                        flush=True)
+                report_count += 1
             time.sleep(1/hz)
     except KeyboardInterrupt:
         pass
     finally:
-        # Explicitly clear triangles; previous renderer frames can't survive.
-        try:
-            last_empty = encode_mesh((frame + 1) & 0xffffffff, [])
-            writer.write(last_empty)
-            if romfs_writer is not None:
-                romfs_writer.write(last_empty)
-        finally:
-            memory.close()
+        memory.close()
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
