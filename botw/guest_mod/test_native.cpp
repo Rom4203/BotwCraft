@@ -89,18 +89,26 @@ int main() {
     assert(g_init_calls == 0);
     assert(g_tick_registrations == 0);
     assert(g_tick == nullptr);
-    // Ryujinx 1.3.3 crashed at nn::fs::ReadFile on the ROMFS mesh probe.
-    // This release MUST NOT register the callback or attempt guest file reads.
-    assert(g_native_draw_registrations == 0);
-    assert(g_draw == nullptr);
+    // A fixed 3-vertex GPU probe MUST NOT read guest files. It only proves
+    // rendering capability if actually observed in Ryujinx, never MC geometry.
+    assert(g_native_draw_registrations == 1);
+    assert(g_draw != nullptr);
+    assert(Contains("BotwCraft:VISUAL_PROBE_REGISTERED"));
     assert(g_file_reads == 0);
-    assert(Contains("BotwCraft:MESH_DISABLED"));
+    g_draw(1, 1, 1920, 1080);
+    assert(g_draw_calls == 1);
+    assert(g_draw_vertices == 3);
+    assert(Contains("BotwCraft:VISUAL_PROBE_DRAW_CALLED result=1"));
+    assert(g_file_reads == 0);
+    // An invalid graphics target must NOT trigger a native draw.
+    g_draw(0, 0, 0, 0);
+    assert(g_draw_calls == 1);
 
     // Future version where exact player offsets have been established:
     g_logs.clear();
     g_position_supported = true;
     WiiXLaunch_ModEntry();
-    assert(g_native_draw_registrations == 0);
+    assert(g_native_draw_registrations == 2);
     assert(g_init_calls == 1);
     assert(g_tick_registrations == 1);
     assert(g_tick != nullptr);
