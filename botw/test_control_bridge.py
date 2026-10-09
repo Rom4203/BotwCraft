@@ -17,6 +17,21 @@ class ControlTests(unittest.TestCase):
         self.assertIn([1, 26, 0, 0, 0],
                       control_bridge.key_events({0x57}, set()))
 
+    def test_mouse_camera_delta_uses_virtual_cursor_no_jump(self):
+        events, stick, virt = control_bridge.mouse_events(None, (900, 400), (0, 0))
+        self.assertEqual(events, [])
+        self.assertEqual(virt, (0, 0))
+        events, stick, virt = control_bridge.mouse_events((900, 400), (920, 390), virt)
+        self.assertEqual(events, [[4, 0, 20, -10, 0]])
+        self.assertAlmostEqual(stick[0], 0.8)
+        self.assertAlmostEqual(stick[1], 0.4)
+        self.assertEqual(virt, (20, -10))
+
+    def test_mouse_input_clamps_large_jumps(self):
+        events, stick, _ = control_bridge.mouse_events((0, 0), (9999, -9999), (0, 0))
+        self.assertEqual(events, [[4, 0, 80, -80, 0]])
+        self.assertEqual(stick, (1.0, 1.0))
+
     def test_keyboard_gamepad_axes_normalized(self):
         state = control_bridge.raw_gamepad({0x57, 0x44, 0x20})
         self.assertAlmostEqual(state.right, math.sqrt(0.5))
