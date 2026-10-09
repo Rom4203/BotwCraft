@@ -8,6 +8,7 @@ on:
       - 'botw/guest_mod/**'
       - 'botw/setup_wiixlaunch.py'
       - 'botw/guard_switch_player_hook.py'
+      - 'botw/guard_switch_fs.py'
       - 'botw/patch_botw15_player_pose.py'
       - 'BUILD_AND_PACKAGE.bat'
       - 'build_botw_windows.bat'
@@ -19,6 +20,7 @@ on:
       - 'botw/guest_mod/**'
       - 'botw/setup_wiixlaunch.py'
       - 'botw/guard_switch_player_hook.py'
+      - 'botw/guard_switch_fs.py'
       - 'botw/patch_botw15_player_pose.py'
       - '.github/workflows/botw-native-sources.yml'
 jobs:
@@ -36,6 +38,10 @@ jobs:
         run: python botw/setup_wiixlaunch.py
       - name: Guard unverified Switch hooks
         run: python botw/guard_switch_player_hook.py
+      - name: Guard unmounted Switch SD filesystem access
+        run: python botw/guard_switch_fs.py
+      - name: Assert bad SD path is refused before filesystem calls
+        run: grep -q "IsSdPath(path) \&\& !g_FSClientReady" WiiXLaunch/include/wiixlaunch/fs.hpp
       - name: Install BOTW 1.5.0 fingerprint-locked PlayerInfo pose callback
         run: python botw/patch_botw15_player_pose.py
       - name: Verify native pose callback is installed and guarded
