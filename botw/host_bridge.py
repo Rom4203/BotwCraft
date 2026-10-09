@@ -50,7 +50,7 @@ def _real(value):
     return type(value) in (float, int) and math.isfinite(value) and abs(value) < 1e6
 
 class Bridge:
-    def __init__(self, mapping_name=NAME, memory=None, clock=uptime_ms):
+    def __init__(self, mapping_name=NAME, memory=None, clock=uptime_ms, preview_blocks=False):
         if memory is None:
             if sys.platform != "win32":
                 raise OSError("Windows named mappings are required")
@@ -59,6 +59,7 @@ class Bridge:
             raise ValueError("memory mapping too short")
         self.mapping = memory
         self.clock = clock
+        self.preview_blocks = preview_blocks
         self.lock = threading.RLock()
         self.seq = 0
         self.last_packet = None
@@ -144,6 +145,23 @@ class Bridge:
 
     def heartbeat(self):
         with self.lock:
+            if self.preview_blocks:
+                # PREVIEW ONLY: this is a self-contained MC creative playground,
+                # NOT Link's BOTW pose, no game collision or camera matching.
+                mc = self.minecraft_status()
+                in_world = mc.get("in_world", False)
+                use_mc = in_world and all(
+                    _real(mc.get(k)) for k in ("x", "y", "z", "yaw", "pitch")
+                )
+                self.update(dict(
+                    type="pose",
+                    x=mc["x"] if use_mc else 0.0,
+                    y=mc["y"] if use_mc else 80.0,
+                    z=mc["z"] if use_mc else 0.0,
+                    yaw=mc["yaw"] if use_mc else 0.0,
+                    pitch=mc["pitch"] if use_mc else 0.0,
+                    world=1,
+                ))
             now = self.clock()
             alive = self.last_packet is not None and 0 <= now - self.last_packet < 1000
             # Do NOT signal a live game when there is no fresh valid game pose.
@@ -193,10 +211,15 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=39847)
     parser.add_argument("--mapping", default=NAME)
+    parser.add_argument("--preview-blocks", action="store_true",
+                        help="Self-contained experimental Minecraft blocks sandbox (NOT BOTW player sync)")
     args = parser.parse_args()
     if sys.platform != "win32":
         raise SystemExit("Run the bridge on Windows (Ryujinx PC)")
-    bridge = Bridge(mapping_name=args.mapping)
+    bridge = Bridge(mapping_name=args.mapping, preview_blocks=args.preview_blocks)
+    if args.preview_blocks:
+        print("[BotwCraft] EXPERIMENTAL BLOCKS: synthetic preview world, "
+              "no BOTW terrain/Link tracking", flush=True)
     try:
         with Server(("127.0.0.1", args.port), Client) as server:
             server.bridge = bridge
