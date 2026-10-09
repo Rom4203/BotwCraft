@@ -25,6 +25,14 @@ public final class SkyClient {
 
     private SkyClient() {}
 
+    /** Capture the ACTUAL Minecraft GUI in SkyCraft's original GPU staging.
+     * The 3D terrain render is skipped during this explicit test, while
+     * Minecraft retains its own keyboard/mouse and normal game simulation.
+     */
+    public static boolean hudCaptureActive() {
+        return BotwCraftSession.hudEnabled() && SkyLink.transportOpen();
+    }
+
     /** Used by Skyrim-only mixins. Never take over native Minecraft. */
     public static boolean linked() {
         return false;
@@ -87,6 +95,14 @@ public final class SkyClient {
             if (exportErrors++ < 5) {
                 SkyCraft.LOG.error("BotwCraft: render-ring export failed", ex);
             }
+        }
+
+        // Original SkyCraft GPU asynchronous HUD readback and RGBA triple
+        // buffer publication. No fabricated HUD, and no input interception.
+        // Do not export the full Minecraft scene into the HUD texture:
+        // LevelRendererMixin explicitly skips it ONLY in this HUD mode.
+        if (hudCaptureActive()) {
+            FrameExporter.capture(minecraft);
         }
     }
 
