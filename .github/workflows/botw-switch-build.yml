@@ -12,6 +12,11 @@ on:
       - 'botw/setup_wiixlaunch.py'
       - 'WiiXLaunch'
       - 'build_botw_windows.bat'
+      - 'package_botw_windows.py'
+      - 'packaging/INSTALL_NATIVE_TEST.bat'
+      - 'packaging/START_BRIDGE.bat'
+      - 'packaging/README_INSTALL.txt'
+      - 'botw/install_native.py'
   pull_request:
     paths:
       - '.github/workflows/botw-switch-build.yml'
@@ -62,6 +67,24 @@ jobs:
           test -s botw/guest_mod/build/switch-mods/botwcraft.wxlm
           file WiiXLaunch/build/switch/subsdk9 botw/guest_mod/build/switch-mods/botwcraft.wxlm
           sha256sum WiiXLaunch/build/switch/subsdk9 botw/guest_mod/build/switch-mods/botwcraft.wxlm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Build the original SkyCraft-derived Fabric Minecraft module
+        working-directory: fabric
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon build
+      - name: Assemble the single Windows native test ZIP
+        run: python package_botw_windows.py --output dist/BotwCraft-Switch-15-test.zip
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: BotwCraft-Switch-15-Native-Test-Complete
+          path: dist/BotwCraft-Switch-15-test.zip
+          if-no-files-found: error
       - uses: actions/upload-artifact@v4
         if: success()
         with:
