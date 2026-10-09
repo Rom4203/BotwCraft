@@ -34,15 +34,13 @@ echo [INFO] Python for host build:
 where python
 python --version
 if errorlevel 1 goto :failed
-if exist "%ROOT%mod\botw\guest_mod\mod.json" (
- set "GUEST=%ROOT%mod\botw\guest_mod"
+rem Always compile the GitHub-tracked, safely capability-gated guest.
+rem Legacy "mod\\botw\\guest_mod" may contain an experimental crashing hook.
+if exist "%ROOT%botw\guest_mod\mod.json" (
+ set "GUEST=%ROOT%botw\guest_mod"
 ) else (
- if exist "%ROOT%botw\guest_mod\mod.json" (
-  set "GUEST=%ROOT%botw\guest_mod"
- ) else (
-  echo [ERROR] BOTW guest mod.json missing
-  goto :failed
- )
+ echo [ERROR] BOTW canonical guest botw\\guest_mod\\mod.json missing
+ goto :failed
 )
 echo [1/2] Compiling BOTW host...
 pushd "%WIIXL%"
