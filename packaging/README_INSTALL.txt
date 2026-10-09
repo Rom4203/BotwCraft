@@ -136,3 +136,56 @@ known-good 1.5.0 anti-crash build. Back up game saves before experiments.
 The Windows bridge remains DIAGNOSTICS-ONLY for Minecraft sections, not a
 working host->Switch 3D geometry transport. The earlier "renderer disabled"
 note above applies to the stability build, not this visual-probe branch.
+
+REAL MINECRAFT MESH -> ZELDA NVN: EXPERIMENTAL GDB TRANSPORT
+-----------------------------------------------------------
+Progress:
+  Confirmed: 4 Minecraft sections, 170 triangles, valid Minecraft pose.
+  Confirmed: Zelda draws a native 3-vertex triangle with WiiXLaunch NVN.
+  New experimental glue: Ryujinx GDB writes bounded BWC1 packets into a
+  memory buffer allocated by our own .wxlm module. No Nintendo ROMFS/SD I/O.
+  Not yet confirmed in a live emulator: first genuine MC triangle on screen.
+
+WARNING: The GDB stub pauses ALL game threads during each debugger write.
+This is deliberately rate-limited to ONE mesh frame per second. Expect
+stutter; this is proof-of-concept, NOT real-time SkyCraft performance.
+Back up Zelda saves before enabling. Never run GDB against public hosts.
+
+Setup:
+1. Close Ryujinx and the bridge; back up your Zelda saves.
+2. Install with INSTALL_NATIVE_TEST.bat (replaces WiiXLaunch botwcraft.wxlm
+   with a version containing our guest-owned 16,416-byte BWC1 mailbox).
+3. Use Ryujinx 1.3.3 if its Options > Debug offers "GDB Stub". Otherwise
+   use a supported Ryujinx Canary build, 1.3.109+; keep your existing profile
+   and saves backed up. Configure GDB Stub to listen on port 22225.
+4. For native guest-address discovery Ryujinx must write LIVE console text
+   to a log. Put the full path to ryujinx-live.log in ryujinx-log-path.txt
+   next to START_GDB_BRIDGE.bat. START_RYUJINX_LOGGED.bat may help if your
+   Ryujinx build emits redirected stdout; otherwise choose a live log.
+5. Launch Zelda 1.5.0. Its log should report:
+   BotwCraft:GDB_MESH_BUFFER_ADDR=0x0000............
+   BotwCraft:GDB_MESH_CAPACITY=16416
+   BotwCraft:VISUAL_PROBE_REGISTERED
+6. Launch Minecraft manually, load a NORMAL world with Fabric SkyCraft and
+   type /botwcraft connect.
+7. Run START_GDB_BRIDGE.bat INSTEAD of START_BRIDGE.bat. Never run both:
+   both would consume the same SkyCraft v11 render ring. If the GDB bridge
+   hangs awaiting a guest address, inspect the live-log path.
+8. On success, the Python bridge prints "Sent N real Minecraft triangles"
+   and the guest logs "BotwCraft:GDB_MESH_FRAME_ACCEPTED". Expect projected
+   Minecraft geometry to depend on the Minecraft camera: matching the
+   Zelda camera and collision remains unsolved.
+9. Stop the test with Ctrl+C, or disable GDB stub and restore the earlier
+   known-good fixed-triangle module if necessary. Do not edit Java args.
+
+Security/integrity:
+* The ONLY guest address used is the bounded buffer announced by our module
+  in a recent, version-matched 1.5.0 log. We do not scan or patch unrelated
+  Zelda memory, do not open remote GDB hosts, and do not alter game saves.
+* The guest validates BWC1 headers, payload length, FNV-1a hash and finite
+  vertices before calling DrawMesh. Invalid data falls back to the fixed
+  reference triangle.
+* A fake local GDB server exercises the RSP write and guest resume protocol
+  in CI. That is NOT proof the exact Ryujinx 1.3.3 stub accepts all packets.
+* The return to native real-time Zelda 3D requires a supported guest-side
+  shared-memory or emulator integration and proper Zelda camera transform.
