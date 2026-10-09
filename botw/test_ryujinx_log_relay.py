@@ -24,6 +24,12 @@ class Tests(unittest.TestCase):
         self.assertIsNone(parse_pose(
             "BotwCraft:NATIVE_POSITION_MILLI x=100000000000 y=0 z=0"))
 
+    def test_zero_pose_is_not_real_link_telemetry(self):
+        self.assertIsNone(parse_pose(
+            "BotwCraft:NATIVE_POSITION_MILLI x=0 y=0 z=0"))
+        self.assertIsNotNone(parse_pose(
+            "BotwCraft:NATIVE_POSITION_MILLI x=-1125000 y=237000 z=1900000"))
+
     def test_invalid_lines(self):
         self.assertIsNone(parse_pose("plain X=1 Y=2 Z=3"))
         self.assertIsNone(parse_pose("[BotwCraft:v100] X=1000000 Y=0 Z=0"))
