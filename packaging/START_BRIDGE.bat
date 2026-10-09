@@ -1,7 +1,7 @@
 @echo off
 setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0"
-if not exist "bridge\launcher.py" !BOTWCRAFT_EXTRA! (
+if not exist "bridge\launcher.py" (
  echo [BotwCraft] ERROR: bridge\launcher.py introuvable.
  pause
  exit /b 1
@@ -30,13 +30,13 @@ if defined BOTWCRAFT_GDB_PORT (
 )
 rem A Python variable including "py -3" cannot be quoted as one executable.
 if exist "D:\Program Files\Python\python.exe" (
- "D:\Program Files\Python\python.exe" -u "bridge\launcher.py"
+ "D:\Program Files\Python\python.exe" -u "bridge\launcher.py" !BOTWCRAFT_EXTRA!
 ) else (
  where py >nul 2>&1
  if not errorlevel 1 (
-  py -3 -u "bridge\launcher.py"
+  py -3 -u "bridge\launcher.py" !BOTWCRAFT_EXTRA!
  ) else (
-  python -u "bridge\launcher.py"
+  python -u "bridge\launcher.py" !BOTWCRAFT_EXTRA!
  )
 )
 if errorlevel 1 echo [BotwCraft] Le bridge s'est arrete avec une erreur.
