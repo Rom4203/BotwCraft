@@ -6,6 +6,7 @@
 // This validates native NVN callback and geometry shader separately from IPC.
 // If successful, a safe host->guest live packet transport is still required.
 #include <cstdint>
+#include "../native_guest_mesh.hpp"
 #include <wiixlaunch/imports/wiixl_core.h>
 #include <wiixlaunch/imports/botw_player.h>
 #include <wiixlaunch/imports/botw_input.h>
@@ -33,6 +34,14 @@ WXL_USE_botw_gfx(DrawMesh);
 namespace {
     uint32_t frame = 0; // Throttle authentic Link position log from PlayerTick.
     uint32_t drawCallbackCount = 0;
+    // Exposed ONLY for explicit local GDB debug writes. The host discovers
+    // this guest pointer from our native log, never from hard-coded offsets.
+    // GDB halts the guest while writing, so a full packet lands atomically
+    // with respect to the NVN frame callback.
+    alignas(16) uint8_t gGdbMeshPacket[BotwCraftMesh::kMaxBytes]{};
+    uint32_t lastAcceptedMeshFrame = 0;
+    uint32_t lastAcceptedMeshVertices = 0;
+    bool gdbMeshReady = false;
 
     // Static 3-vertex diagnostic triangle, deliberately NOT Minecraft data.
     // Layout botw.gfx v1.1: clip (x,y,z,w), then (nx,ny,nz,nw).
@@ -43,15 +52,57 @@ namespace {
          0.00f,  0.18f, 0.5f, 1.0f, 0.0f, 0.0f, 1.0f, 1.0f,
     };
 
+    void LogNativeHex(char* buf, uintptr_t address) {
+        // Freestanding ARM64 guest cannot depend on snprintf/printf.
+        char* p = buf;
+        const char* prefix = "BotwCraft:GDB_MESH_BUFFER_ADDR=0x";
+        while (*prefix) *p++ = *prefix++;
+        for (int shift = int(sizeof(uintptr_t) * 8) - 4; shift >= 0; shift -= 4) {
+            unsigned nibble = static_cast<unsigned>((address >> shift) & 0xFu);
+            *p++ = "0123456789abcdef"[nibble];
+        }
+        *p = '\0';
+    }
+
     void OnGameDraw(uintptr_t cb, uintptr_t texture, int32_t w, int32_t h) {
         (void)w; (void)h;
         if (cb == 0 || texture == 0 || !Graphics::DrawMesh) return;
-        const uint32_t ok = Graphics::DrawMesh(cb, texture, kTriangle, 3);
+        const float* vertices = kTriangle;
+        uint32_t count = 3;
+
+        // Read ONLY the buffer owned by this module. Never open guest files,
+        // scan Zelda memory or dereference pointers received from Windows.
+        const auto* header =
+            reinterpret_cast<const BotwCraftMesh::Header*>(gGdbMeshPacket);
+        if (header->magic == BotwCraftMesh::kMagic
+            && header->version == BotwCraftMesh::kVersion
+            && header->vertexCount > 0
+            && header->vertexCount <= BotwCraftMesh::kMaxVertices
+            && header->vertexCount % 3 == 0) {
+            const auto bytes = sizeof(BotwCraftMesh::Header)
+                + static_cast<size_t>(header->vertexCount) * sizeof(BotwCraftMesh::Vertex);
+            if (BotwCraftMesh::Valid(gGdbMeshPacket, bytes)) {
+                vertices = reinterpret_cast<const float*>(
+                    gGdbMeshPacket + sizeof(BotwCraftMesh::Header));
+                count = header->vertexCount;
+                if (!gdbMeshReady || header->frameId != lastAcceptedMeshFrame) {
+                    lastAcceptedMeshFrame = header->frameId;
+                    lastAcceptedMeshVertices = count;
+                    if (Core::Log) Core::Log("BotwCraft:GDB_MESH_FRAME_ACCEPTED");
+                }
+                gdbMeshReady = true;
+            }
+        }
+        const uint32_t ok = Graphics::DrawMesh(cb, texture, vertices, count);
         ++drawCallbackCount;
         if (drawCallbackCount == 1 && Core::Log) {
             Core::Log(ok
                 ? "BotwCraft:VISUAL_PROBE_DRAW_CALLED result=1 vertices=3"
                 : "BotwCraft:VISUAL_PROBE_DRAW_CALLED result=0 vertices=3");
+        }
+        if (gdbMeshReady && drawCallbackCount % 240 == 0 && Core::Log) {
+            Core::Log(ok ? "BotwCraft:GDB_MESH_DRAW_OK" :
+                           "BotwCraft:GDB_MESH_DRAW_FAILED");
         }
     }
 
@@ -111,7 +162,11 @@ extern "C" __attribute__((used)) void WiiXLaunch_ModEntry() {
     Log("BotwCraft: native game adapter, strict capabilities; no preview world");
     // No ROMFS, no SD, no sockets and NO live Minecraft mesh packets in this
     // stage. Only a fixed 3-vertex triangle to isolate the NVN draw capability.
-    Log("BotwCraft:VISUAL_PROBE_ONLY; triangle is NOT Minecraft terrain");
+    Log("BotwCraft:STATIC_PROBE_AND_GDB; native BWC1 packet buffer ready");
+    char addressMessage[80] = {};
+    LogNativeHex(addressMessage, reinterpret_cast<uintptr_t>(gGdbMeshPacket));
+    Log(addressMessage);
+    Log("BotwCraft:GDB_MESH_CAPACITY=16416 (32 + 512*32); GDB required");
     if (Graphics::RegisterDraw && Graphics::DrawMesh) {
         if (Graphics::RegisterDraw(&OnGameDraw)) {
             Log("BotwCraft:VISUAL_PROBE_REGISTERED; awaiting Zelda NVN frames");
