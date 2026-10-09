@@ -106,6 +106,7 @@ public final class SkyClient {
 		hideWindowOnce(minecraft);
 		applyViewportSize(minecraft);
 		MirrorWorld.openWhenReady(minecraft);
+		BlockPreview.tick(minecraft);
 
 		if (sky.menuOpen() || sky.loading()) {
 			InputBridge.releaseAll();
