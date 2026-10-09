@@ -74,6 +74,7 @@ class Tests(unittest.TestCase):
                 install_preview.install(root, instance)
                 install_preview.install(root, instance)  # idempotent
             self.assertTrue((instance / ".minecraft/mods/skycraft-0.1.2.jar").exists())
+            self.assertTrue((instance / ".minecraft/botwcraft.preview").is_file())
             cfg = (instance / "instance.cfg").read_text()
             self.assertIn("name=BotwCraftPreview", cfg)
             self.assertIn("-Dbotwcraft.experimentalBlocks=true", cfg)
