@@ -38,6 +38,7 @@ namespace {
     constexpr const char* kMeshPath =
         "sd:/WiiXLaunch/mods/01007EF00011E000/botwcraft/frame.bin";
     alignas(16) uint8_t meshBytes[BotwCraftMesh::kMaxBytes]{};
+    alignas(16) uint8_t stagingBytes[BotwCraftMesh::kMaxBytes]{};
     uint32_t meshFrame = 0;
     uint32_t meshCount = 0;
     uint32_t gfxFrame = 0;
@@ -51,12 +52,15 @@ namespace {
         // 5 fps SD polling. Avoid I/O on every draw call. The GPU reuses the
         // verified previous frame in between.
         if ((++gfxFrame % 12) == 1 && Core::GameReadFile) {
-            const int32_t n = Core::GameReadFile(kMeshPath, meshBytes,
-                                                sizeof(meshBytes));
+            const int32_t n = Core::GameReadFile(kMeshPath, stagingBytes,
+                                                sizeof(stagingBytes));
             if (n >= int32_t(sizeof(BotwCraftMesh::Header)) &&
-                BotwCraftMesh::Valid(meshBytes, static_cast<size_t>(n))) {
-                const auto* h = reinterpret_cast<const BotwCraftMesh::Header*>(meshBytes);
+                BotwCraftMesh::Valid(stagingBytes, static_cast<size_t>(n))) {
+                const auto* h = reinterpret_cast<const BotwCraftMesh::Header*>(stagingBytes);
                 if (h->frameId != meshFrame) {
+                    // Keep a verified last-good frame. Invalid or partially
+                    // written SD files can never corrupt the GPU source.
+                    memcpy(meshBytes, stagingBytes, static_cast<size_t>(n));
                     meshFrame = h->frameId;
                     meshCount = h->vertexCount;
                     meshReady = meshCount > 0;
