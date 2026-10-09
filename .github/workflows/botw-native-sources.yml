@@ -1,0 +1,48 @@
+name: BOTW native WiiXLaunch integration
+on:
+  push:
+    branches: [botw-ryujinx-development]
+    paths:
+      - '.gitmodules'
+      - 'WiiXLaunch'
+      - 'botw/guest_mod/**'
+      - 'botw/setup_wiixlaunch.py'
+      - 'botw/guard_switch_player_hook.py'
+      - 'BUILD_AND_PACKAGE.bat'
+      - 'build_botw_windows.bat'
+      - '.github/workflows/botw-native-sources.yml'
+  pull_request:
+    paths:
+      - '.gitmodules'
+      - 'WiiXLaunch'
+      - 'botw/guest_mod/**'
+      - 'botw/setup_wiixlaunch.py'
+      - 'botw/guard_switch_player_hook.py'
+      - '.github/workflows/botw-native-sources.yml'
+jobs:
+  validate-native:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Fetch pinned WiiXLaunch and wiixlaunch-botw
+        run: python botw/setup_wiixlaunch.py
+      - name: Guard unverified Switch hooks
+        run: python botw/guard_switch_player_hook.py
+      - name: Compile native guest against actual WiiXLaunch SDK
+        run: |
+          c++ -std=c++20 -O2 -Wall -Wextra \
+            -I WiiXLaunch/include \
+            -I WiiXLaunch/sdk/include \
+            botw/guest_mod/mod.cpp botw/guest_mod/test_native.cpp \
+            -o /tmp/botw-native-api-test
+          /tmp/botw-native-api-test
+      - name: Verify game-module source pin
+        run: |
+          test "$(git -C WiiXLaunch rev-parse HEAD)" = "30e0502ff2abb76b1816e8271d4126e0a95ac9fc"
+          test "$(git -C WiiXLaunch/vendor/wiixlaunch-botw rev-parse HEAD)" = "49e07a6acd6d675a98cba3bb8fc244c39bce8790"
