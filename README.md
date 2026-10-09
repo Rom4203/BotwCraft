@@ -1,40 +1,75 @@
-# BotwCraft — Breath of the Wild × Minecraft (work in progress)
+# BotwCraft — Minecraft inside Breath of the Wild (native Switch port)
 
-**Target:** BOTW Switch v1.0.0 in Ryujinx, with Minecraft Java/Fabric acting as the gameplay layer as in [SkyCraft](https://github.com/chasmlol/SkyCraft).
+**New Switch target: BOTW 1.5.0 in Ryujinx** (not 1.0.0, and do not assume
+1.6.0 has matching code addresses). The Minecraft Java/Fabric side is based on
+[SkyCraft](https://github.com/chasmlol/SkyCraft). The Zelda side uses the real
+[WiiXLaunch](https://github.com/BladesawStudios/WiiXLaunch) host plus its
+[wiixlaunch-botw](https://github.com/BladesawStudios/wiixlaunch-botw) game
+module, installed as pinned, nested Git submodules.
 
-> **Status: NOT PLAYABLE.** The project currently compiles the WiiXLaunch host and guest, builds a Fabric mod, and packages a Windows telemetry relay. There is no verified BOTW v1.0.0 player movement hook, native return transport, collision export, or block renderer. Do not assume a successful build means gameplay works. Back up your Zelda saves before testing.
+**Status: native game port in progress, not yet playable.** This repository
+does not claim that Minecraft's blocks, movement and collisions work in BOTW.
+Automated compilation and host-side API tests do NOT prove the actual
+game-engine integration. Do not install an experimental native mod expecting
+SkyCraft gameplay; back up saves before engine tests.
 
-## Experiment: build real Minecraft blocks over Ryujinx (preview, not full BOTW port)
+## Native WiiXLaunch integration (primary development path)
 
-A limited **creative construction preview** can now render Minecraft 26.3
-block geometry as a desktop layer above Ryujinx, reuse the actual Minecraft
-placing/breaking mechanics, and save the blocks in a **separate** Prism world.
-It creates a starter grass platform, forwards keyboard/mouse events, and can
-attempt to map Minecraft movement onto a virtual gamepad.
+Dependencies are **part of the Git repository** instead of an uncontrolled
+`git clone` of the latest revision:
 
-**Important:** This does **not** know Link's actual coordinates, Hyrule's
-collision geometry or Zelda's scene depth. It is not equivalent to SkyCraft's
-real game-engine integration; the two views can drift. It never needs the
-unverified native BOTW 1.0.0 hook.
+- `WiiXLaunch` gitlink:
+  `30e0502ff2abb76b1816e8271d4126e0a95ac9fc`.
+- `WiiXLaunch/vendor/wiixlaunch-botw` nested gitlink:
+  `49e07a6acd6d675a98cba3bb8fc244c39bce8790`
+  (newer than the BladesawStudios fork's main head).
+- The WiiXLaunch BOTW Switch target contains a *verified 1.5.0
+  fingerprint* `0xA982D2BC` and NVN graphics primitives.
+- The same modding API **does not yet support reading or writing the Switch
+  player's real position**. Its `botw.player.SupportsPosition` returns false
+  on Switch, including 1.5.0. A new version/fingerprint alone cannot fix
+  this. The unverified PlayerTick patch is guarded off, rather than causing
+  another emulator crash.
 
-1. Install [Prism Launcher](https://prismlauncher.org/) and sign into your own
-   Minecraft account (only once).
-2. Download the latest **BotwCraft-Blocks-Preview-Windows** ZIP from
-   [GitHub Actions](https://github.com/Rom4203/BotwCraft/actions/workflows/botw-fabric-build.yml),
-   extract it, and double-click `INSTALL_AND_PREVIEW.bat`.
-3. The installer sets up an isolated Minecraft 26.3 Fabric instance, fetches
-   and verifies Fabric API, then launches the sandbox bridge. Start BOTW in
-   Ryujinx normally. The Switch mods are **not installed** by this preview.
+**Working repository structure:**
 
-Read the included `README_PREVIEW.txt` for limitations and missing optional
-virtual-controller dependency. This mode has automated build/protocol tests,
-but **has not been confirmed in an actual Ryujinx + Minecraft playtest**.
+```text
+fabric/                       original SkyCraft-based Minecraft game logic
+protocol/                     byte-compatible SkyCraft v11 shared memory
+WiiXLaunch/                   pinned upstream Switch host (Git submodule)
+  vendor/wiixlaunch-botw/     pinned BOTW 1.5.0 support module
+botw/guest_mod/mod.cpp        version-capability-aware native adapter
+botw/ryujinx_log_relay.py     actual native position logs -> SkyCraft host
+botw/setup_wiixlaunch.py     safe pinned source installation
+```
+
+`BUILD_AND_PACKAGE.bat` can fetch the pinned modules even from a downloaded
+GitHub ZIP. A normal Git clone can use `git submodule update --init
+--recursive`. The native integration is checked by
+[GitHub Actions](https://github.com/Rom4203/BotwCraft/actions/workflows/botw-native-sources.yml):
+it fetches the real WiiXLaunch code, applies the crash guards and compiles
+the native adapter against its generated imports. Python bridge tests run on
+Windows and Linux.
+
+### Still required for SkyCraft-level gameplay
+
+1. Reverse engineer and verify BOTW **Switch 1.5.0** Link position, movement
+   and camera accessors (currently Cemu/Wii U-only in WiiXLaunch).
+2. Send reliable Link position and terrain collision from the guest to the
+   Minecraft shared-memory host; send Minecraft's authoritative state back.
+3. Render Minecraft mesh data *inside* the NVN game renderer, depth-tested
+   against Zelda's world, rather than in a Windows overlay.
+4. Test on a real BOTW 1.5.0 Ryujinx session before publishing a playable ZIP.
+
+The old `PREVIEW_BLOCKS.bat` experiment remains in the tree for reference
+only. **It is not the intended game port** and should not be confused with
+the native mod described above.
 
 ## Windows development build
 
 1. Download this branch's source archive and extract it.
 2. Install JDK 25, Python, Git, and devkitPro/devkitA64. The current script expects the owner's tool locations on drive D: (see `BUILD_AND_PACKAGE.bat`).
-3. Run `BUILD_AND_PACKAGE.bat` once. It downloads WiiXLaunch if needed, applies a guard against an incompatible BOTW Switch player hook, builds both game-side components and packages them.
+3. Run `BUILD_AND_PACKAGE.bat` once. It checks out the pinned WiiXLaunch + wiixlaunch-botw source tree, and applies the Switch player-hook guard, builds both game-side components and packages them.
 4. The result is `dist/BotwCraft-experimental.zip`. It includes the native BOTW host/guest modules, the Minecraft Fabric JAR and a Windows launcher for the read-only bridge.
 5. **Do not install as a playable release.** The native movement, block renderer and real BOTW/Minecraft sync remain to be implemented.
 
