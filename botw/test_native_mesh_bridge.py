@@ -2,6 +2,7 @@
 import mmap
 from pathlib import Path
 import struct
+from unittest.mock import patch
 from tempfile import TemporaryDirectory
 import unittest
 
@@ -73,6 +74,69 @@ class NativeMeshTests(unittest.TestCase):
             native.write_atomic(destination, packet)
             self.assertEqual(destination.read_bytes(), packet)
             self.assertFalse(destination.with_name("frame.bin.part").exists())
+
+
+    def test_stale_fixed_part_directory_is_ignored(self):
+        with TemporaryDirectory() as folder:
+            destination = Path(folder) / "frame.bin"
+            (Path(folder) / "frame.bin.part").mkdir()
+            packet = native.encode_mesh(9, [])
+            native.write_atomic(destination, packet)
+            self.assertEqual(destination.read_bytes(), packet)
+            self.assertEqual(list(Path(folder).glob("frame.bin.*.part")), [])
+
+    def test_locked_destination_retries(self):
+        with TemporaryDirectory() as folder:
+            dest = Path(folder) / "frame.bin"
+            dest.write_bytes(native.encode_mesh(1, []))
+            real_replace = native.os.replace
+            count = [0]
+            def temporarily_locked(src, target):
+                count[0] += 1
+                if count[0] < 3:
+                    raise PermissionError(13, "locked", str(target))
+                return real_replace(src, target)
+            with patch.object(native.os, "replace", side_effect=temporarily_locked):
+                native.write_atomic(dest, native.encode_mesh(2, []), sleeper=lambda _: None)
+            self.assertEqual(count[0], 3)
+            self.assertEqual(native.HEADER.unpack_from(dest.read_bytes())[2], 2)
+            self.assertEqual(list(Path(folder).glob("*.part")), [])
+
+    def test_writer_reports_permission_failure_without_crashing(self):
+        with TemporaryDirectory() as folder:
+            dest = Path(folder) / "frame.bin"
+            dest.write_bytes(native.encode_mesh(1, []))
+            messages = []
+            clock = [10.0]
+            def denied(path, packet):
+                raise PermissionError(13, "access denied", str(path))
+            sink = native.RecoverableMeshWriter(
+                dest, writer=denied,
+                printer=lambda *args, **kwargs: messages.append(args[0]),
+                clock=lambda: clock[0], report_every=20)
+            self.assertFalse(sink.write(native.encode_mesh(2, [])))
+            self.assertFalse(sink.write(native.encode_mesh(3, [])))
+            self.assertEqual(len(messages), 1)
+            self.assertEqual(native.HEADER.unpack_from(dest.read_bytes())[2], 1)
+            clock[0] += 21
+            self.assertFalse(sink.write(native.encode_mesh(4, [])))
+            self.assertEqual(len(messages), 2)
+            sink.writer = native.write_atomic
+            self.assertTrue(sink.write(native.encode_mesh(5, [])))
+            self.assertTrue(any("writable again" in msg for msg in messages))
+            self.assertEqual(native.HEADER.unpack_from(dest.read_bytes())[2], 5)
+
+    def test_permanently_locked_replace_cleans_owned_temp(self):
+        with TemporaryDirectory() as folder:
+            dest = Path(folder) / "frame.bin"
+            dest.write_bytes(native.encode_mesh(1, []))
+            with patch.object(native.os, "replace",
+                              side_effect=PermissionError(13, "blocked")):
+                with self.assertRaises(PermissionError):
+                    native.write_atomic(dest, native.encode_mesh(2, []),
+                                        retries=1, sleeper=lambda _: None)
+            self.assertEqual(native.HEADER.unpack_from(dest.read_bytes())[2], 1)
+            self.assertEqual(list(Path(folder).glob("frame.bin.*.part")), [])
 
 if __name__ == "__main__":
     unittest.main()
