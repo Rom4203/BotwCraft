@@ -63,10 +63,9 @@ namespace {
          0.00f,  0.18f, 0.5f, 1.0f, 0.0f, 0.0f, 1.0f, 1.0f,
     };
 
-    void LogNativeHex(char* buf, uintptr_t address) {
+    void LogTaggedHex(char* buf, const char* prefix, uintptr_t address) {
         // Freestanding ARM64 guest cannot depend on snprintf/printf.
         char* p = buf;
-        const char* prefix = "BotwCraft:GDB_MESH_BUFFER_ADDR=0x";
         while (*prefix) *p++ = *prefix++;
         for (int shift = int(sizeof(uintptr_t) * 8) - 4; shift >= 0; shift -= 4) {
             unsigned nibble = static_cast<unsigned>((address >> shift) & 0xFu);
@@ -218,10 +217,17 @@ extern "C" __attribute__((used)) void WiiXLaunch_ModEntry() {
     // stage. Only a fixed 3-vertex triangle to isolate the NVN draw capability.
     Log("BotwCraft:STATIC_PROBE_AND_GDB; native BWC1 packet buffer ready");
     char addressMessage[80] = {};
-    LogNativeHex(addressMessage, reinterpret_cast<uintptr_t>(gGdbMeshPacket));
+    LogTaggedHex(addressMessage, "BotwCraft:GDB_MESH_BUFFER_ADDR=0x",
+                 reinterpret_cast<uintptr_t>(gGdbMeshPacket));
     Log(addressMessage);
     Log("BotwCraft:GDB_MESH_CAPACITY=16416 (32 + 512*32); GDB required");
-    Log("BotwCraft:BWC2_WORLD_BUFFER_AVAILABLE (native world geometry)");
+    LogTaggedHex(addressMessage, "BotwCraft:BWC2_WORLD_BUFFER_ADDR=0x",
+                 reinterpret_cast<uintptr_t>(gWorldPacket));
+    Log(addressMessage);
+    LogTaggedHex(addressMessage, "BotwCraft:BWC2_CAMERA_SLOT_ADDR=0x",
+                 reinterpret_cast<uintptr_t>(&gZeldaViewProjection));
+    Log(addressMessage);
+    Log("BotwCraft:BWC2_WORLD_BUFFER_CAPACITY=15416");
     Log("BotwCraft:BWC2_WAITING_FOR_ZELDA_CAMERA");
 
     if (Graphics::RegisterDraw && Graphics::DrawMesh) {
