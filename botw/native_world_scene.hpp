@@ -78,6 +78,72 @@ struct ViewProjection {
     bool ready;
 };
 
+// Converts a REAL Zelda camera object's position/target/up vectors to a
+// column-major NVN 0..1 depth projection. Call the SDK Camera::GetPosition,
+// GetLookAt, GetUp only with a verified live game camera pointer.
+//
+// This is deliberately NOT called with Minecraft's yaw/pitch. A Zelda
+// camera hook must supply the vectors and actual FOV/aspect from the game.
+inline bool BuildViewProjection(const float eye[3], const float at[3],
+                                const float sourceUp[3], float fovRadians,
+                                float aspect, float zNear, float zFar,
+                                ViewProjection& out) {
+    out.ready = false;
+    if (!eye || !at || !sourceUp) return false;
+    if (!(fovRadians > 0.1f && fovRadians < 3.0f &&
+          aspect > 0.1f && aspect < 10.0f &&
+          zNear > 0.001f && zFar > zNear)) return false;
+    for (int i=0;i<3;i++)
+        if (!Finite(eye[i]) || !Finite(at[i]) || !Finite(sourceUp[i]))
+            return false;
+
+    float forward[3]={at[0]-eye[0],at[1]-eye[1],at[2]-eye[2]};
+    auto normalize=[](float v[3]) -> bool {
+        float lenSq = v[0]*v[0]+v[1]*v[1]+v[2]*v[2];
+        if (!(lenSq > 1.e-8f && lenSq < 1.e12f)) return false;
+        float inv=1.0f / __builtin_sqrtf(lenSq);
+        for (int i=0;i<3;i++) v[i]*=inv;
+        return true;
+    };
+    auto cross=[](const float a[3],const float b[3],float outVec[3]) {
+        outVec[0]=a[1]*b[2]-a[2]*b[1];
+        outVec[1]=a[2]*b[0]-a[0]*b[2];
+        outVec[2]=a[0]*b[1]-a[1]*b[0];
+    };
+    auto dot=[](const float a[3],const float b[3]) {
+        return a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
+    };
+    if (!normalize(forward)) return false;
+    float right[3]{};
+    cross(forward,sourceUp,right);
+    if (!normalize(right)) return false;
+    float up[3]{};
+    cross(right,forward,up);
+    if (!normalize(up)) return false;
+
+    // tan(fov/2) from sin/cos compiler builtins, avoids a runtime libm
+    // dependency for the ARM64 freestanding WiiXLaunch guest module.
+    float sine=__builtin_sinf(fovRadians*0.5f);
+    float cosine=__builtin_cosf(fovRadians*0.5f);
+    if (!(sine > 1.e-6f && cosine > 0.0f)) return false;
+    float fy=cosine/sine;
+    float fx=fy/aspect;
+    float depthA=zFar/(zFar-zNear);
+    float depthB=-zNear*zFar/(zFar-zNear);
+    float* m=out.m;
+    m[0]=right[0]*fx; m[4]=right[1]*fx; m[8]=right[2]*fx;
+    m[12]=-dot(right,eye)*fx;
+    m[1]=up[0]*fy; m[5]=up[1]*fy; m[9]=up[2]*fy;
+    m[13]=-dot(up,eye)*fy;
+    m[2]=forward[0]*depthA; m[6]=forward[1]*depthA;
+    m[10]=forward[2]*depthA;
+    m[14]=-dot(forward,eye)*depthA+depthB;
+    m[3]=forward[0]; m[7]=forward[1]; m[11]=forward[2];
+    m[15]=-dot(forward,eye);
+    out.ready=true;
+    return true;
+}
+
 // This is the native camera adapter's math kernel. It cannot replace a true
 // Zelda camera hook: caller MUST set ready only with a measured game matrix.
 inline bool Project(const ViewProjection& camera, const Vertex& v,
