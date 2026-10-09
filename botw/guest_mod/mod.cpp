@@ -32,10 +32,16 @@ WXL_USE_botw_gfx(DrawMesh);
 }
 
 namespace {
-    // Portable SD-card path, scoped to WiiXLaunch's BOTW title data.
-    // The host writes this file atomically with os.replace(). It is never
-    // read from Ryujinx's ExeFS and never uses networking inside Switch.
-    constexpr const char* kMeshPath =
+    // Read ROMFS first: WiiXLaunch loaded us from the game's mounted ROMFS
+    // even when MountSdCardForDebug was denied by Ryujinx.
+    // This is a relative path by design: FS::Candidates resolves it through
+    // the game's actual live ROMFS mount (often "content:").
+    //
+    // IMPORTANT: ROMFS overlay may be SNAPSHOTTED by Ryujinx at game start.
+    // This path guarantees neither live updates nor a functioning renderer.
+    constexpr const char* kMeshRomfsPath =
+        "WiiXLaunch/mods/botwcraft/frame.bin";
+    constexpr const char* kMeshSdPath =
         "sd:/WiiXLaunch/mods/01007EF00011E000/botwcraft/frame.bin";
     alignas(16) uint8_t meshBytes[BotwCraftMesh::kMaxBytes]{};
     alignas(16) uint8_t stagingBytes[BotwCraftMesh::kMaxBytes]{};
@@ -43,7 +49,9 @@ namespace {
     uint32_t meshCount = 0;
     uint32_t gfxFrame = 0;
     bool meshReady = false;
-    bool meshLogged = false;
+    bool meshReadLogged = false;
+    bool romfsReadAvailable = false;
+    uint32_t meshPolls = 0;
     uint32_t frame = 0;
 
     void OnGameDraw(uintptr_t commandBuffer, uintptr_t dstTexture,
@@ -52,24 +60,53 @@ namespace {
         // 5 fps SD polling. Avoid I/O on every draw call. The GPU reuses the
         // verified previous frame in between.
         if ((++gfxFrame % 12) == 1 && Core::GameReadFile) {
-            const int32_t n = Core::GameReadFile(kMeshPath, stagingBytes,
-                                                sizeof(stagingBytes));
-            if (n >= int32_t(sizeof(BotwCraftMesh::Header)) &&
-                BotwCraftMesh::Valid(stagingBytes, static_cast<size_t>(n))) {
-                const auto* h = reinterpret_cast<const BotwCraftMesh::Header*>(stagingBytes);
-                if (h->frameId != meshFrame) {
-                    // Keep a verified last-good frame. Invalid or partially
-                    // written SD files can never corrupt the GPU source.
+            ++meshPolls;
+            // ROMFS is mounted to load botwcraft.wxlm, whereas Ryujinx's
+            // MountSdCardForDebug may be denied (0x320002).
+            int32_t n =
+                Core::GameReadFile(kMeshRomfsPath, stagingBytes, sizeof(stagingBytes));
+            bool valid = n >= int32_t(sizeof(BotwCraftMesh::Header))
+                && BotwCraftMesh::Valid(stagingBytes, static_cast<size_t>(n));
+            const bool romfsValid = valid;
+            if (romfsValid && !romfsReadAvailable) {
+                romfsReadAvailable = true;
+                if (Core::Log)
+                    Core::Log("BotwCraft:MESH_ROMFS_READ_OK; "
+                              "static file accessible, live updates unverified");
+            }
+            // Switch SD fallback no more often than approximately 40 sec.
+            // Only use the contents if the complete BWC1 hash validates.
+            // Re-read ROMFS if a failed SD probe overwrote staging.
+            if (meshPolls % 240 == 0) {
+                const int32_t sd =
+                    Core::GameReadFile(kMeshSdPath, stagingBytes, sizeof(stagingBytes));
+                if (sd >= int32_t(sizeof(BotwCraftMesh::Header))
+                    && BotwCraftMesh::Valid(stagingBytes, static_cast<size_t>(sd))) {
+                    n = sd;
+                    valid = true;
+                    if (!meshReadLogged && Core::Log)
+                        Core::Log("BotwCraft:MESH_SD_READ_OK");
+                    meshReadLogged = true;
+                } else {
+                    n = Core::GameReadFile(kMeshRomfsPath,
+                                           stagingBytes, sizeof(stagingBytes));
+                    valid = n >= int32_t(sizeof(BotwCraftMesh::Header))
+                        && BotwCraftMesh::Valid(stagingBytes, static_cast<size_t>(n));
+                }
+            }
+            if (valid) {
+                const auto* h =
+                    reinterpret_cast<const BotwCraftMesh::Header*>(stagingBytes);
+                if (h->frameId != meshFrame || !meshReadLogged) {
                     memcpy(meshBytes, stagingBytes, static_cast<size_t>(n));
                     meshFrame = h->frameId;
                     meshCount = h->vertexCount;
                     meshReady = meshCount > 0;
-                    if (!meshLogged) {
-                        meshLogged = true;
-                        // This proves host -> virtual SD -> actual game module.
-                        if (Core::Log)
-                            Core::Log("BotwCraft: native NVN got validated Minecraft mesh frame");
-                    }
+                    if (!meshReadLogged && Core::Log)
+                        Core::Log("BotwCraft:MESH_FRAME_FIRST_ACCEPT");
+                    else if (Core::Log)
+                        Core::Log("BotwCraft:MESH_FRAME_CHANGED");
+                    meshReadLogged = true;
                 }
             }
         }
