@@ -1,4 +1,4 @@
-"""Tests that installation uses Ryujinx virtual SD, not a RomFS dead path.
+"""Tests that installation uses game ROMFS fallback when Ryujinx virtual SD fails.
 
 Everything below is synthetic local test data; no game files or personal
 Ryujinx profile are read or modified by tests.
@@ -28,7 +28,7 @@ class NativeInstallerTests(unittest.TestCase):
         (self.ryujinx / "mods" / "contents").mkdir(parents=True)
         (self.ryujinx / "sdcard").mkdir()
 
-    def test_installs_real_locations_and_never_romfs(self):
+    def test_installs_real_locations_with_romfs_fallback(self):
         exe, guest = install_native.install(self.bundle, self.ryujinx,
                                            backup_root=self.oldbackup)
         self.assertTrue(exe.is_file())
@@ -36,7 +36,10 @@ class NativeInstallerTests(unittest.TestCase):
         self.assertIn("mods/contents", exe.as_posix())
         self.assertIn("sdcard/WiiXLaunch/mods", guest.as_posix())
         self.assertNotIn("/romfs/", exe.as_posix())
-        self.assertNotIn("/romfs/", guest.as_posix())
+        romfs = (self.ryujinx / "mods" / "contents" / install_native.TITLE_ID /
+                 "BotwCraft" / "romfs" / "WiiXLaunch" / "mods" / "botwcraft.wxlm")
+        self.assertTrue(romfs.is_file())
+        self.assertEqual(romfs.read_bytes(), guest.read_bytes())
 
     def test_existing_mods_backup_outside_active_mod_directory(self):
         installed_exe, installed_guest = install_native.install(
