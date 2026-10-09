@@ -14,6 +14,16 @@ class Tests(unittest.TestCase):
     def test_guest_format(self):
         p = parse_pose("[INFO] [BotwCraft:v100] position X=-10 Y=20 Z=30")
         self.assertEqual((p["x"], p["y"], p["z"]), (-10, 20, 30))
+    def test_real_native_wiixlaunch_position(self):
+        line = ("[16:01:03] [BotwCraft] "
+                "BotwCraft:NATIVE_POSITION_MILLI x=-42000 y=120034 z=7850")
+        pose = parse_pose(line)
+        self.assertEqual((pose["x"], pose["y"], pose["z"]),
+                         (-42.0, 120.034, 7.85))
+        self.assertEqual(pose["type"], "pose")
+        self.assertIsNone(parse_pose(
+            "BotwCraft:NATIVE_POSITION_MILLI x=100000000000 y=0 z=0"))
+
     def test_invalid_lines(self):
         self.assertIsNone(parse_pose("plain X=1 Y=2 Z=3"))
         self.assertIsNone(parse_pose("[BotwCraft:v100] X=1000000 Y=0 Z=0"))
