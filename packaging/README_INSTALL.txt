@@ -224,3 +224,52 @@ matching NVN world depth attachment, streaming Minecraft texture atlas,
 Hyrule Havok/physics collision to Fabric, then controls/HUD capture.
 Automated builds validate packet and math; do not interpret them as
 proving camera, collision or real-time interaction inside the game.
+
+MINECRAFT HUD FIRST / KEYBOARD + MOUSE OWNED BY MINECRAFT
+--------------------------------------------------------
+This test is the first stage of the revised SkyCraft parity roadmap:
+1. Original MC HUD in the Zelda display.
+2. Minecraft camera/mouse and configurable BOTW-specific keys.
+3. MC creative flight / first-person world movement, no collisions yet.
+4. BOTW world collision and walking.
+5. World-anchored Minecraft block place/break and 3D display.
+Defer BOTW mobs, terrain destruction and persistence for now.
+
+START_HUD_BRIDGE.bat runs host_bridge + Ryujinx position relay +
+diagnostic native mesh component + the existing click-through Win32
+hud_overlay.py. It NEVER starts either game or captures any keyboard or
+mouse itself. minecraft_mods/skycraft-*.jar now enables the ORIGINAL
+SkyCraft FrameExporter, with the same asynchronous GPU staging buffers
+and original protocol v11 shared-memory RGBA triple buffer.
+
+Quick test:
+* Have Zelda 1.5.0 running in Ryujinx, and Minecraft 26.3 open to a world.
+* Run START_HUD_BRIDGE.bat instead of START_BRIDGE.bat.
+* From the Minecraft chat issue /botwcraft connect, then
+  /botwcraft hud on.
+* In this explicit HUD mode, Minecraft's world rendering is suppressed
+  ONLY in Minecraft's own framebuffer capture, leaving its real hand,
+  hotbar, hearts, inventory and menus. Minecraft continues to tick and
+  receives physical keyboard/mouse input.
+* A non-activating, mouse-click-through Windows layer displays these
+  ORIGINAL RGBA GUI pixels over Ryujinx's client area. This is a
+  diagnostic Windows window compositor, not a finished native NVN
+  texture pipeline. It requires Ryujinx to run in windowed/borderless
+  mode and does NOT unify window focus yet. On a single monitor, keep
+  both windows visible for this first test.
+* If no HUD appears, run CHECK_HUD.bat; it saves minecraft-hud-test.png
+  from the actual shared-memory RGBA buffer. If that file contains the
+  MC interface, then the GUI producer works and the remaining problem
+  is the Ryujinx Windows overlay placement/alpha.
+* Use /botwcraft hud off to restore normal Minecraft world rendering,
+  or /botwcraft disconnect to end the session.
+* Do not use the old /botwcraft hud command with the old Fabric JAR;
+  replace it with the new one, manually, via Prism > Mods.
+
+IMPORTANT: This patch does NOT yet route Minecraft player movement or
+mouse yaw to Zelda, take over camera or install real world collisions.
+For complete one-window parity, the next stage requires pinning Ryujinx
+as a non-activating display surface while Minecraft keeps SDL focus,
+with carefully isolated BOTW action key mappings. Do not let both
+windows process the same keyboard/mouse events. Savegame backups
+recommended before all experimental native Switch updates.
