@@ -31,22 +31,22 @@ MAX_H=2160
 
 def read_latest(mapping):
     """Return (width,height,flipped,frame_id,rgba) or None if not published."""
-    state=struct.unpack_from("<I",mapping,OFF_OVERLAY_CTL)[0]
+    state=struct.unpack("<I",mapping[OFF_OVERLAY_CTL:OFF_OVERLAY_CTL+4])[0]
     if not state & OVERLAY_DIRTY:
         return None
     slot=state & 3
     if slot>2:
         return None
     hdr=OFF_OVERLAY_SLOT_HDR+slot*SLOT_HDR_SIZE
-    width,height,flags=struct.unpack_from("<III",mapping,hdr)
-    frame_id=struct.unpack_from("<Q",mapping,hdr+SH_FRAME_ID)[0]
+    width,height,flags=struct.unpack("<III",mapping[hdr:hdr+12])
+    frame_id=struct.unpack("<Q",mapping[hdr+SH_FRAME_ID:hdr+SH_FRAME_ID+8])[0]
     if not (0<width<=MAX_W and 0<height<=MAX_H and frame_id>0):
         return None
     start=host.OFF_OVERLAY_PIXELS+slot*host.OVERLAY_SLOT_BYTES
     data=bytes(mapping[start:start+width*height*4])
     # This reader is deliberately read-only. If writer swapped slots while
     # sampling, discard rather than save an incomplete HUD.
-    if struct.unpack_from("<I",mapping,OFF_OVERLAY_CTL)[0]!=state:
+    if struct.unpack("<I",mapping[OFF_OVERLAY_CTL:OFF_OVERLAY_CTL+4])[0]!=state:
         return None
     return width,height,bool(flags&1),frame_id,data
 
