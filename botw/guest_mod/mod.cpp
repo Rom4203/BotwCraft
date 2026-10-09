@@ -10,9 +10,11 @@
 #include <wiixlaunch/imports/botw_input.h>
 #include <wiixlaunch/imports/botw_gfx.h>
 #include <wiixlaunch/mod_runtime.h>
+#include "../native_guest_mesh.hpp"
 
 namespace Core {
 WXL_USE_wiixl_core(Log);
+WXL_USE_wiixl_core(GameReadFile);
 }
 namespace Player {
 WXL_USE_botw_player(SupportsPosition);
@@ -25,10 +27,56 @@ WXL_USE_botw_input(SupportsInjection);
 }
 namespace Graphics {
 WXL_USE_botw_gfx(IsGX2);
+WXL_USE_botw_gfx(RegisterDraw);
+WXL_USE_botw_gfx(DrawMesh);
 }
 
 namespace {
+    // Portable SD-card path, scoped to WiiXLaunch's BOTW title data.
+    // The host writes this file atomically with os.replace(). It is never
+    // read from Ryujinx's ExeFS and never uses networking inside Switch.
+    constexpr const char* kMeshPath =
+        "sd:/WiiXLaunch/mods/01007EF00011E000/botwcraft/frame.bin";
+    alignas(16) uint8_t meshBytes[BotwCraftMesh::kMaxBytes]{};
+    uint32_t meshFrame = 0;
+    uint32_t meshCount = 0;
+    uint32_t gfxFrame = 0;
+    bool meshReady = false;
+    bool meshLogged = false;
     uint32_t frame = 0;
+
+    void OnGameDraw(uintptr_t commandBuffer, uintptr_t dstTexture,
+                    int32_t width, int32_t height) {
+        (void)width; (void)height;
+        // 5 fps SD polling. Avoid I/O on every draw call. The GPU reuses the
+        // verified previous frame in between.
+        if ((++gfxFrame % 12) == 1 && Core::GameReadFile) {
+            const int32_t n = Core::GameReadFile(kMeshPath, meshBytes,
+                                                sizeof(meshBytes));
+            if (n >= int32_t(sizeof(BotwCraftMesh::Header)) &&
+                BotwCraftMesh::Valid(meshBytes, static_cast<size_t>(n))) {
+                const auto* h = reinterpret_cast<const BotwCraftMesh::Header*>(meshBytes);
+                if (h->frameId != meshFrame) {
+                    meshFrame = h->frameId;
+                    meshCount = h->vertexCount;
+                    meshReady = meshCount > 0;
+                    if (!meshLogged) {
+                        meshLogged = true;
+                        // This proves host -> virtual SD -> actual game module.
+                        if (Core::Log)
+                            Core::Log("BotwCraft: native NVN got validated Minecraft mesh frame");
+                    }
+                }
+            }
+        }
+        if (meshReady && Graphics::DrawMesh && commandBuffer != 0 && dstTexture != 0) {
+            const float* packed = reinterpret_cast<const float*>(
+                meshBytes + sizeof(BotwCraftMesh::Header));
+            // 8 floats per vertex: native NVN normals shader input.
+            Graphics::DrawMesh(commandBuffer, dstTexture, packed, meshCount);
+        }
+    }
+
 
     void AppendLiteral(char*& ptr, const char* text) {
         while (*text) *ptr++ = *text++;
@@ -84,20 +132,30 @@ namespace {
 
 extern "C" __attribute__((used)) void WiiXLaunch_ModEntry() {
     Log("BotwCraft: native game adapter, strict capabilities; no preview world");
+    // Graphics and position are separate capabilities. The native NVN
+    // renderer can run even when BOTW Switch position is still unsupported.
+    if (Graphics::RegisterDraw && Graphics::DrawMesh && Core::GameReadFile) {
+        if (Graphics::RegisterDraw(&OnGameDraw)) {
+            Log("BotwCraft: native NVN renderer registered; awaiting MC mesh on SD");
+        } else {
+            Log("BotwCraft: native NVN draw registration refused");
+        }
+    } else {
+        Log("BotwCraft: native renderer import missing");
+    }
+
     if (!Player::SupportsPosition || Player::SupportsPosition() == 0) {
-        Log("BotwCraft: BOTW_NATIVE_UNSUPPORTED: verified player position API absent");
-        Log("BotwCraft: no player hook installed; Minecraft is NOT linked to Hyrule");
+        Log("BotwCraft: BOTW_NATIVE_UNSUPPORTED: player position API absent");
+        Log("BotwCraft: render channel independent; no Link pose hook installed");
         return;
     }
     if (!Player::Init || !Player::RegisterTick || !Player::GetPosition) {
-        Log("BotwCraft: BOTW_NATIVE_UNSUPPORTED: required API import missing");
+        Log("BotwCraft: BOTW_NATIVE_UNSUPPORTED: required player import missing");
         return;
     }
-    // Init() returns 0 both when the hook already exists and if unavailable.
-    // Registration must also succeed; we only enable our own callback then.
     Player::Init();
     if (!Player::RegisterTick(&PlayerTick)) {
-        Log("BotwCraft: BOTW_NATIVE_UNSUPPORTED: tick registration refused");
+        Log("BotwCraft: BOTW_NATIVE_UNSUPPORTED: player tick refused");
         return;
     }
     active = true;
@@ -106,5 +164,5 @@ extern "C" __attribute__((used)) void WiiXLaunch_ModEntry() {
     Log(input ? "BotwCraft: game input capability present"
               : "BotwCraft: game input injection unsupported");
     Log(gx2 ? "BotwCraft: GX2 graphics" : "BotwCraft: NVN/unknown graphics");
-    Log("BotwCraft: native position telemetry active (orientation/collision/render not wired)");
+    Log("BotwCraft: real native pose telemetry active");
 }
