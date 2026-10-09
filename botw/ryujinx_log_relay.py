@@ -21,8 +21,8 @@ PATTERN = re.compile(
 # Actual native WiiXLaunch guest telemetry (fixed-point to avoid freestanding
 # printf/floating-point formatting inside the Switch .wxlm).
 NATIVE_POSITION = re.compile(
-    r'BotwCraft:NATIVE_POSITION_MILLI\\s+x=([-+]?\\d+)'
-    r'\\s+y=([-+]?\\d+)\\s+z=([-+]?\\d+)'
+    r'BotwCraft:NATIVE_POSITION_MILLI\s+x=([-+]?\d+)'
+    r'\s+y=([-+]?\d+)\s+z=([-+]?\d+)'
 )
 
 def parse_pose(line):
