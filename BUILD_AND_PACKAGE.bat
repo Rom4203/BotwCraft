@@ -15,7 +15,7 @@ if not exist "botw\guard_switch_player_hook.py" (
  pause
  exit /b 1
 )
-echo Protecting unverified game hooks; BOTW Switch 1.5.0 targeted.
+echo Protecting Switch hooks; BOTW 1.5.0 PlayerInfo reader will be installed before native compilation.
 "%PY%" "botw\guard_switch_player_hook.py"
 if errorlevel 1 (echo Hook guard failed; refusing to compile & pause & exit /b 1)
 call "build_botw_windows.bat" --no-pause
