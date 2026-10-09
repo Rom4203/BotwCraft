@@ -97,7 +97,7 @@ def preview_jvm_config(content):
         old = lines[jvm_index].partition("=")[2]
         for key in ("botwcraft.experimentalBlocks", "skycraft.quitWithSkyrim",
                     "skycraft.showWindow", "skycraft.startHidden"):
-            old = re.sub(r"(?<!\\S)-D" + re.escape(key) + r"=\\S+", "", old)
+            old = re.sub(r"(?<!\S)-D" + re.escape(key) + r"=\S+", "", old)
         lines[jvm_index] = "JvmArgs=" + " ".join((old.strip(), *flags)).strip()
     override = next((i for i, line in enumerate(lines)
                      if line.startswith("OverrideJavaArgs=")), None)
@@ -105,7 +105,7 @@ def preview_jvm_config(content):
         lines[override] = "OverrideJavaArgs=true"
     else:
         lines.append("OverrideJavaArgs=true")
-    return "\\n".join(lines) + "\\n"
+    return "\n".join(lines) + "\n"
 
 def install(root, instance_root):
     jar_dir = root / "minecraft_mods"
