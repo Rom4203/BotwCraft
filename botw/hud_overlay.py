@@ -68,6 +68,26 @@ def decode_slot_header(read, state):
         return None
     return slot, width, height, bool(flags & 1), frame_id
 
+def remove_void_background(pixels, width, height, tolerance=48):
+    """Transparent-key a nearly uniform Minecraft void/sky background.
+
+    Input/output RGBA8. RGB under removed pixels is zeroed. This is only an
+    approximate overlay mode; actual BOTW depth-based compositing is absent.
+    """
+    if len(pixels) != width * height * 4 or width <= 0 or height <= 0:
+        raise ValueError("invalid RGBA frame")
+    points = (0, width - 1, width * (height - 1), width * height - 1)
+    # Use the most common corner as the sky key, preserving terrain/blocks.
+    samples = [tuple(pixels[4 * i:4 * i + 3]) for i in points]
+    key = min(samples, key=lambda c: sum(
+        sum(abs(c[j] - v[j]) for j in range(3)) for v in samples))
+    t = max(0, min(255, int(tolerance)))
+    out = bytearray(pixels)
+    for i in range(0, len(out), 4):
+        if max(abs(out[i + j] - key[j]) for j in range(3)) <= t:
+            out[i:i + 4] = b"\\x00\\x00\\x00\\x00"
+    return out
+
 class SharedOverlay:
     def __init__(self, name=NAME):
         k32 = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -196,7 +216,7 @@ class OverlayWindow:
         self.g.SelectObject(dc, bmp)
         return bmp, bits
 
-    def draw(self, frame, location, rgba=True):
+    def draw(self, frame, location, rgba=True, key_background=False):
         x, y, output_w, output_h = location
         w, h, bottom_up, _, pixels = frame
         if self.src_size != (w, h):
@@ -210,6 +230,10 @@ class OverlayWindow:
             if old_bitmap: self.g.DeleteObject(old_bitmap)
             self.dst_size = (output_w, output_h)
         # Minecraft's RGBA framebuffer -> Win32 layered-window BGRA.
+        if key_background:
+            if not rgba:
+                raise ValueError("void background removal expects RGBA source")
+            pixels = remove_void_background(pixels, w, h)
         converted = bytearray(pixels)
         if rgba:
             converted[0::4], converted[2::4] = pixels[2::4], pixels[0::4]
@@ -245,7 +269,7 @@ class OverlayWindow:
             if dc: self.g.DeleteDC(dc)
         if self.hwnd: self.u.DestroyWindow(self.hwnd)
 
-def run(name=NAME, rgba=True, fps=20):
+def run(name=NAME, rgba=True, fps=20, key_background=False):
     if sys.platform != "win32":
         raise RuntimeError("Windows required")
     win = OverlayWindow()
@@ -268,7 +292,7 @@ def run(name=NAME, rgba=True, fps=20):
                 frame = shm.frame()
                 if frame and frame[3] != last_id:
                     last_id, last_frame_at = frame[3], now
-                    win.draw(frame, where, rgba=rgba)
+                    win.draw(frame, where, rgba=rgba, key_background=key_background)
                 if now - last_frame_at > 1.0:
                     win.hide()  # pause/stale frame: never leave ghost HUD over BOTW
             else:
@@ -285,10 +309,12 @@ if __name__ == "__main__":
     parser.add_argument("--name", default=NAME)
     parser.add_argument("--pixel-format", choices=("rgba", "bgra"), default="rgba")
     parser.add_argument("--fps", type=int, default=20)
+    parser.add_argument("--key-background", action="store_true",
+                        help="Experimental 3D Minecraft preview: key out sky pixels (no BOTW depth)")
     args = parser.parse_args()
     if not 1 <= args.fps <= 60:
         parser.error("--fps must be 1..60")
     try:
-        run(args.name, args.pixel_format == "rgba", args.fps)
+        run(args.name, args.pixel_format == "rgba", args.fps, args.key_background)
     except (OSError, RuntimeError) as exc:
         raise SystemExit(f"[BotwCraft HUD] {exc}")
