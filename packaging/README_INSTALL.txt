@@ -189,3 +189,38 @@ Security/integrity:
   in CI. That is NOT proof the exact Ryujinx 1.3.3 stub accepts all packets.
 * The return to native real-time Zelda 3D requires a supported guest-side
   shared-memory or emulator integration and proper Zelda camera transform.
+
+SKYCRAFT -> BOTW REAL WORLD-SPACE BACKEND (BWC2, DEVELOPMENT)
+------------------------------------------------------------
+This is an INCREMENTAL core-engine port, not a playable release.
+User-approved priorities: camera, 3D block world rendering, Minecraft
+physics/collision, Minecraft keyboard/mouse and HUD. Defer saves,
+Zelda-mob interactions and mining/destroying Zelda terrain.
+
+BWC1 (legacy) is screen-space, uses the Minecraft camera and produces
+the large cyan rectangle over the Zelda picture. DO NOT treat this as
+equivalent to SkyCraft.
+
+New BWC2:
+* botw/world_space.py keeps actual block/world coordinates from SkyCraft
+  v11, UV atlas coordinates, ARGB shading, Minecraft lighting and
+  transparency/normal flags. They are anchored once to Link's real
+  world position, NEVER re-centered on every Minecraft-camera change.
+* botw/native_world_scene.hpp validates checksummed bounded BWC2
+  packets and computes actual 3D clip-space from Zelda camera
+  position/target/up and the current native projection focal.
+* botw/world_gdb_bridge.py writes BWC2 3D geometry into a guest-owned
+  buffer using the local Ryujinx debugger, separate from BWC1.
+* botw/guest_mod/mod.cpp provides separate BWC2 and BWC1 buffers.
+  The native world renderer WILL NOT draw a fake 2D rectangle when BWC2
+  is received without a real BOTW camera. Real camera/depth hookups are
+  required, and still in development.
+* START_WORLD_BRIDGE.bat is DEVELOPMENT ONLY. It will not make the world
+  appear until the live BOTW camera matrix/depth path is wired. Users who
+  just want Link telemetry should keep START_BRIDGE.bat.
+
+Next source modules being implemented: native BOTW camera hook,
+matching NVN world depth attachment, streaming Minecraft texture atlas,
+Hyrule Havok/physics collision to Fabric, then controls/HUD capture.
+Automated builds validate packet and math; do not interpret them as
+proving camera, collision or real-time interaction inside the game.
