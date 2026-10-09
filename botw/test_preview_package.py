@@ -86,6 +86,7 @@ class Tests(unittest.TestCase):
         out = install_preview.preview_jvm_config(existing)
         self.assertIn("OverrideJavaArgs=true", out)
         self.assertIn("-Xmx3G", out)
+        self.assertIn("--enable-native-access=ALL-UNNAMED", out)
         self.assertIn("-Dbotwcraft.experimentalBlocks=true", out)
         self.assertIn("-Dskycraft.startHidden=false", out)
         self.assertIn("-Dskycraft.showWindow=true", out)
