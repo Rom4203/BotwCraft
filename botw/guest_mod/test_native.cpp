@@ -111,7 +111,8 @@ int main() {
     for (int i = 0; i < 12; ++i) g_draw(1, 1, 1280, 720);
     assert(g_draw_calls > 0);
     assert(g_draw_vertices == 3);
-    assert(Contains("native NVN got validated Minecraft mesh"));
+    assert(Contains("BotwCraft:MESH_ROMFS_READ_OK"));
+    assert(Contains("BotwCraft:MESH_FRAME_FIRST_ACCEPT"));
     uint32_t priorCalls = g_draw_calls;
     // Corruption is rejected without replacing the previous validated frame.
     g_file_contents.back() ^= 0xff;
