@@ -5,7 +5,6 @@
 // is unsupported, so on BOTW 1.0.0 the safe result is to refuse player hooks
 // rather than install an address from another executable and crash Ryujinx.
 #include <cstdint>
-#include <cstdio>
 #include <wiixlaunch/imports/wiixl_core.h>
 #include <wiixlaunch/imports/botw_player.h>
 #include <wiixlaunch/imports/botw_input.h>
@@ -30,6 +29,29 @@ WXL_USE_botw_gfx(IsGX2);
 
 namespace {
     uint32_t frame = 0;
+
+    void AppendLiteral(char*& ptr, const char* text) {
+        while (*text) *ptr++ = *text++;
+    }
+
+    void AppendNumber(char*& ptr, int32_t value) {
+        if (value < 0) {
+            *ptr++ = '-';
+            value = -value; // range checked before conversion
+        }
+        char digits[12];
+        unsigned count = 0;
+        do {
+            digits[count++] = char('0' + value % 10);
+            value /= 10;
+        } while (value && count < sizeof(digits));
+        while (count) *ptr++ = digits[--count];
+    }
+
+    bool FinitePosition(float v) {
+        // Range must keep *1000 representable as signed 32-bit.
+        return v == v && v > -100000.0f && v < 100000.0f;
+    }
     bool active = false;
 
     void Log(const char* message) {
@@ -43,13 +65,19 @@ namespace {
         if ((++frame % 6) != 0) return;
         float xyz[3] = {};
         if (!Player::GetPosition(xyz)) return;
-        // One decimal per 1/1000 game unit; not a fabricated or stale pose.
-        const int32_t x = static_cast<int32_t>(xyz[0] * 1000.0f);
-        const int32_t y = static_cast<int32_t>(xyz[1] * 1000.0f);
-        const int32_t z = static_cast<int32_t>(xyz[2] * 1000.0f);
-        char buf[160] = {};
-        std::snprintf(buf, sizeof(buf),
-            "BotwCraft:NATIVE_POSITION_MILLI x=%d y=%d z=%d", x, y, z);
+        if (!FinitePosition(xyz[0]) ||
+            !FinitePosition(xyz[1]) ||
+            !FinitePosition(xyz[2])) return;
+        // No libc printf dependency in a freestanding .wxlm guest.
+        char buf[150] = {};
+        char* ptr = buf;
+        AppendLiteral(ptr, "BotwCraft:NATIVE_POSITION_MILLI x=");
+        AppendNumber(ptr, static_cast<int32_t>(xyz[0] * 1000.0f));
+        AppendLiteral(ptr, " y=");
+        AppendNumber(ptr, static_cast<int32_t>(xyz[1] * 1000.0f));
+        AppendLiteral(ptr, " z=");
+        AppendNumber(ptr, static_cast<int32_t>(xyz[2] * 1000.0f));
+        *ptr = 0;
         Log(buf);
     }
 }
@@ -75,10 +103,8 @@ extern "C" __attribute__((used)) void WiiXLaunch_ModEntry() {
     active = true;
     const bool input = Controller::SupportsInjection && Controller::SupportsInjection() != 0;
     const bool gx2 = Graphics::IsGX2 && Graphics::IsGX2() != 0;
-    char buf[140] = {};
-    std::snprintf(buf, sizeof(buf),
-        "BotwCraft: native position ready; input=%u graphics=%s",
-        static_cast<unsigned>(input), gx2 ? "GX2" : "NVN/unknown");
-    Log(buf);
+    Log(input ? "BotwCraft: game input capability present"
+              : "BotwCraft: game input injection unsupported");
+    Log(gx2 ? "BotwCraft: GX2 graphics" : "BotwCraft: NVN/unknown graphics");
     Log("BotwCraft: native position telemetry active (orientation/collision/render not wired)");
 }
