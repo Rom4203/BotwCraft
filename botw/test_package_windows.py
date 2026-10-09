@@ -22,6 +22,11 @@ class PackageTests(unittest.TestCase):
             "packaging/START_BRIDGE.bat",
             "packaging/INSTALL_NATIVE_TEST.bat",
             "botw/install_native.py",
+            "botw/install_native_mc.py",
+            "botw/install_preview.py",
+            "botw/prism_discovery.py",
+            "tools/minecraft-bundle/Prism/instances/SkyCraft/instance.cfg",
+            "tools/minecraft-bundle/Prism/instances/SkyCraft/mmc-pack.json",
             "packaging/README_INSTALL.txt",
             "THIRD-PARTY-NOTICES.md",
             "LICENSE",
@@ -40,13 +45,15 @@ class PackageTests(unittest.TestCase):
             with zipfile.ZipFile(out) as archive:
                 files = archive.namelist()
                 self.assertEqual(archive.testzip(), None)
-                self.assertEqual(len(files), 16)
+                self.assertEqual(len(files), 21)
                 self.assertTrue(any(p.endswith("/exefs/subsdk9") for p in files))
                 self.assertIn("ryujinx_sdcard/WiiXLaunch/mods/01007EF00011E000/botwcraft.wxlm", files)
                 self.assertIn("minecraft_mods/skycraft-0.1.2.jar", files)
                 self.assertIn("START_BRIDGE.bat", files)
                 self.assertIn("INSTALL_NATIVE_TEST.bat", files)
                 self.assertIn("install_native.py", files)
+                self.assertIn("install_native_mc.py", files)
+                self.assertIn("prism_template/mmc-pack.json", files)
                 self.assertFalse(any("/romfs/WiiXLaunch/" in p for p in files))
                 self.assertIn("bridge/control_bridge.py", files)
                 self.assertIn("bridge/native_mesh_bridge.py", files)
