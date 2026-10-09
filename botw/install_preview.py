@@ -13,6 +13,11 @@ import sys
 import urllib.parse
 import urllib.request
 
+try:
+    from .prism_discovery import locate_prism, prism_data_dir
+except ImportError:
+    from prism_discovery import locate_prism, prism_data_dir
+
 INSTANCE = "BotwCraftPreview"
 MC = "26.3"
 USER_AGENT = "BotwCraft/0.1 (https://github.com/Rom4203/BotwCraft)"
@@ -106,11 +111,11 @@ def install(root, instance_root):
 def main():
     if sys.platform != "win32":
         raise SystemExit("Windows required")
-    appdata = os.environ.get("APPDATA")
-    if not appdata:
-        raise SystemExit("APPDATA is missing; cannot locate Prism instances")
     root = Path(__file__).resolve().parent
-    profile = Path(appdata) / "PrismLauncher" / "instances" / INSTANCE
+    prism = locate_prism(allow_picker=True)
+    if prism is None:
+        raise SystemExit("Prism Launcher not found. Select prismlauncher.exe.")
+    profile = prism_data_dir(prism) / "instances" / INSTANCE
     try:
         install(root, profile)
     except (OSError, ValueError, KeyError, urllib.error.URLError) as exc:
