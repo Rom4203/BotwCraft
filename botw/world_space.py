@@ -10,7 +10,10 @@ from dataclasses import dataclass
 import math
 import struct
 
-from . import native_mesh_bridge as legacy
+try:
+    from . import native_mesh_bridge as legacy
+except ImportError:
+    import native_mesh_bridge as legacy
 
 MAGIC = 0x32435742  # BWC2
 VERSION = 2
