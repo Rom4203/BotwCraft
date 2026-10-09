@@ -12,15 +12,16 @@ import time
 ROOT = Path(__file__).resolve().parent
 
 
-def build_commands(preview_blocks=False, gdb_port=None):
+def build_commands(preview_blocks=False, gdb_port=None, world_gdb_port=None):
     scripts = [("host_bridge.py", ["--preview-blocks"] if preview_blocks else [])]
     if not preview_blocks:
         scripts.append(("ryujinx_log_relay.py", []))
-        if gdb_port is None:
-            scripts.append(("native_mesh_bridge.py", []))
-        else:
-            # IMPORTANT: exactly one consumer of SkyCraft v11 RenderRing.
+        if world_gdb_port is not None:
+            scripts.append(("world_gdb_bridge.py", ["--port", str(world_gdb_port)]))
+        elif gdb_port is not None:
             scripts.append(("gdb_mesh_bridge.py", ["--port", str(gdb_port)]))
+        else:
+            scripts.append(("native_mesh_bridge.py", []))
     return scripts
 
 
@@ -32,17 +33,25 @@ def main():
                     help="Explicit standalone preview; NEVER claims Link telemetry.")
     ap.add_argument("--gdb-port", type=int, default=None,
                     help="EXPERIMENTAL: replace diagnostic mesh reader with Ryujinx GDB writer")
+    ap.add_argument("--world-gdb-port", type=int, default=None,
+                    help="BWC2 real-world Hyrule 3D channel, separate from 2D GDB")
     args = ap.parse_args()
+    if args.world_gdb_port is not None and not (1 <= args.world_gdb_port <= 65535):
+        ap.error("invalid world GDB port")
+    if args.world_gdb_port is not None and args.gdb_port is not None:
+        ap.error("select only one GDB render-ring consumer")
     if args.gdb_port is not None and not (1 <= args.gdb_port <= 65535):
         ap.error("invalid GDB port")
-    if args.preview_blocks and args.gdb_port is not None:
+    if args.preview_blocks and (args.gdb_port is not None or
+                                args.world_gdb_port is not None):
         ap.error("preview mode cannot be combined with native GDB")
     processes = []
     try:
         print("[BotwCraft] Bridge only: Minecraft and Ryujinx are NOT started or modified.", flush=True)
         print("[BotwCraft] Launch Minecraft manually; type /botwcraft connect in its chat.", flush=True)
         print("[BotwCraft] No Java arguments, Prism profile changes or automatic worlds.", flush=True)
-        for name, extra in build_commands(args.preview_blocks, args.gdb_port):
+        for name, extra in build_commands(args.preview_blocks, args.gdb_port,
+                                                  args.world_gdb_port):
             script = ROOT / name
             if not script.is_file():
                 raise FileNotFoundError(f"Missing packaged component: {script}")
