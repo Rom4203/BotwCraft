@@ -17,18 +17,36 @@ except ImportError:  # Standalone ZIP bridge/launcher.py
 
 ROOT = Path(__file__).resolve().parent
 
+def inspect_prism_instance(profile):
+    """Do not mistake a Prism GUI window for a running Minecraft game."""
+    for file in (profile / "instance.cfg", profile / "mmc-pack.json"):
+        if not file.is_file():
+            raise RuntimeError(f"Prism instance incomplete or absent: {file}; "
+                               "re-run INSTALL_NATIVE_TEST.bat")
+    mods = profile / ".minecraft" / "mods"
+    if not list(mods.glob("skycraft-*.jar")):
+        raise RuntimeError(f"Minecraft SkyCraft mod missing from {mods}; "
+                           "re-run INSTALL_NATIVE_TEST.bat")
+    if not list(mods.glob("fabric-api-*.jar")):
+        print(f"[BotwCraft] WARNING: Fabric API missing in {mods}", flush=True)
+
+
+def minecraft_started(profile, after):
+    latest = profile / ".minecraft" / "logs" / "latest.log"
+    try:
+        return latest.is_file() and latest.stat().st_mtime >= after - 3
+    except OSError:
+        return False
+
+
 def start_minecraft(preview_blocks=False):
     prism = locate_prism(allow_picker=True)
     if prism is None:
-        raise RuntimeError("Prism Launcher introuvable : sélectionne prismlauncher.exe "
-                           "dans la fenêtre de recherche")
+        raise RuntimeError("Prism Launcher introuvable : selectionne prismlauncher.exe")
     data_dir = prism_data_dir(prism)
     profile_name = "BotwCraftPreview" if preview_blocks else "BotwCraftNative"
-    expected_instance = data_dir / "instances" / profile_name
-    if not expected_instance.is_dir():
-        raise RuntimeError(
-            f"L'instance Minecraft {profile_name} n'existe pas dans "
-            f"{data_dir}. Relance INSTALL_AND_PREVIEW.bat.")
+    profile = data_dir / "instances" / profile_name
+    inspect_prism_instance(profile)
     env = os.environ.copy()
     opts = env.get("JAVA_TOOL_OPTIONS", "")
     if preview_blocks:
@@ -36,10 +54,14 @@ def start_minecraft(preview_blocks=False):
     opts += (" -Dskycraft.startHidden=false -Dskycraft.showWindow=true"
              " -Dskycraft.quitWithSkyrim=false")
     env["JAVA_TOOL_OPTIONS"] = opts.strip()
-    print(f"[BotwCraft] Launching Minecraft through {prism}", flush=True)
-    return subprocess.Popen(
-        [str(prism), "--dir", str(data_dir), "--launch", profile_name],
-        env=env, cwd=prism.parent)
+    print(f"[BotwCraft] Prism: {prism}", flush=True)
+    print(f"[BotwCraft] Instance: {profile}", flush=True)
+    print(f"[BotwCraft] Command: --dir {data_dir} --launch {profile_name}", flush=True)
+    start_time = time.time()
+    process = subprocess.Popen([str(prism), "--dir", str(data_dir),
+                                "--launch", profile_name], env=env, cwd=prism.parent)
+    return process, profile, start_time
+
 
 def build_commands(preview_blocks=False):
     scripts = [
@@ -72,13 +94,25 @@ def main():
             print(f"[BotwCraft] Starting {name}", flush=True)
             processes.append((name, subprocess.Popen([sys.executable, "-u", str(script), *extra], cwd=ROOT)))
             time.sleep(0.25)
-        minecraft = start_minecraft(args.preview_blocks)
+        minecraft, profile, minecraft_start = start_minecraft(args.preview_blocks)
+        mc_confirmed = False
+        mc_warned = False
         print("[BotwCraft] Ctrl+C stops Windows bridge processes. "
               "Ryujinx files untouched.", flush=True)
         if args.preview_blocks:
             print("[BotwCraft] Preview: Minecraft creative blocks OVER the BOTW window, "
                   "without native game collision, Link position or depth.", flush=True)
         while True:
+            if not mc_confirmed and minecraft_started(profile, minecraft_start):
+                mc_confirmed = True
+                print("[BotwCraft] Minecraft started: latest.log was updated.", flush=True)
+            if not mc_confirmed and not mc_warned and time.time() - minecraft_start >= 30:
+                mc_warned = True
+                print("[BotwCraft] WARNING: Prism started, but Minecraft launch was not confirmed.", flush=True)
+                print("[BotwCraft] Open Prism, double-click BotwCraftNative and check its console.", flush=True)
+                print(f"[BotwCraft] Minecraft log: {profile / '.minecraft' / 'logs' / 'latest.log'}", flush=True)
+            if minecraft.poll() not in (None, 0):
+                raise RuntimeError(f"Prism exited with an error ({minecraft.returncode})")
             for name, proc in processes:
                 result = proc.poll()
                 if result is not None:
