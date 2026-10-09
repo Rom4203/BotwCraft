@@ -96,8 +96,8 @@ nn::fs::ReadFile on the game's main thread. It crashed ~6 seconds after
 launch. Do NOT reinstall the previous ROMFS diagnostic test.
 
 THIS BUILD:
-* Removes the native WiiXLaunch module's ROMFS/SD frame.bin reader and
-  native mesh draw callback. It DOES NOT render Minecraft blocks inside
+* Removes the native WiiXLaunch module's ROMFS/SD frame.bin reader.
+  The experimental GPU triangle-probe build uses a callback but DOES NOT render Minecraft blocks inside
   Zelda. Link pose is still read natively by the WiiXLaunch 1.5.0 host
   after game startup; the Python log relay forwards those genuine poses.
 * The Python native_mesh_bridge is NOW DIAGNOSTICS-ONLY. It reports
@@ -114,5 +114,25 @@ THIS BUILD:
 * A future real-time guest-render transport is a separate development
   task. Success of Python or ARM64 builds does not prove 3D rendering.
 
-Expected native log: "BotwCraft:MESH_DISABLED"
+Expected experimental native log: "BotwCraft:VISUAL_PROBE_REGISTERED"
 Expected Windows log: "Minecraft export: N sections, T projected triangles".
+
+GPU VISUAL PROBE — EXPERIMENTAL BOTW 1.5.0 BUILD
+------------------------------------------------
+Current experimental WiiXLaunch guest registers botw.gfx.RegisterDraw and
+invokes botw.gfx.DrawMesh with ONE BUILT-IN 3-VERTEX CLIP-SPACE TRIANGLE.
+This is a NATIVE Zelda NVN rendering TEST, NOT Minecraft geometry. The
+older dangerous Core::GameReadFile ROMFS/SD operation is not present.
+
+Check Ryujinx logs for:
+  BotwCraft:VISUAL_PROBE_REGISTERED
+  BotwCraft:VISUAL_PROBE_DRAW_CALLED result=1 vertices=3
+
+If those appear and a triangle is visible on the Zelda image, the guest
+graphics path works. It still needs a LIVE real-time bridge for the user's
+actual Minecraft mesh triangles. If Ryujinx crashes, restore the previous
+known-good 1.5.0 anti-crash build. Back up game saves before experiments.
+
+The Windows bridge remains DIAGNOSTICS-ONLY for Minecraft sections, not a
+working host->Switch 3D geometry transport. The earlier "renderer disabled"
+note above applies to the stability build, not this visual-probe branch.
