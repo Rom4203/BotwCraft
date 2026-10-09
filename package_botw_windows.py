@@ -36,8 +36,10 @@ def archive_manifest(root):
     prefix = f"ryujinx_mods/contents/{TARGET}/BotwCraft"
     manifest = {
         f"{prefix}/exefs/subsdk9": root / "WiiXLaunch" / "build" / "switch" / "subsdk9",
-        # WiiXLaunch enumerates sd:/WiiXLaunch/mods/<TITLE_ID>/.
-        # Putting the guest into Ryujinx RomFS made it invisible to the loader.
+        # WiiXLaunch prioritizes game ROMFS when present. Ryujinx 1.3.3 may
+        # reject MountSdCardForDebug; if so ROMFS is the only valid mod source.
+        f"{prefix}/romfs/WiiXLaunch/mods/botwcraft.wxlm": guest,
+        # Also ship SD copy for setups where the debug SD mount succeeds.
         f"ryujinx_sdcard/WiiXLaunch/mods/{TARGET.upper()}/botwcraft.wxlm": guest,
         "minecraft_mods/" + find_minecraft_jar(root).name: find_minecraft_jar(root),
         "bridge/host_bridge.py": root / "botw" / "host_bridge.py",
