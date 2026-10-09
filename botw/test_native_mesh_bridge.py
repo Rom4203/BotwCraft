@@ -1,4 +1,5 @@
 """Test actual SkyCraft render-ring messages -> native WiiXLaunch mesh packets."""
+import inspect
 import mmap
 from pathlib import Path
 import struct
@@ -9,6 +10,17 @@ import unittest
 from botw import native_mesh_bridge as native
 
 class NativeMeshTests(unittest.TestCase):
+
+    def test_runtime_only_reports_mesh_and_never_writes_ryujinx_files(self):
+        # Ryujinx 1.3.3 crashes when the experimental guest ReadFile runs;
+        # until a supported transport is built, the host stays diagnostics-only.
+        code = inspect.getsource(native.run)
+        self.assertIn("Minecraft export:", code)
+        self.assertNotIn("writer.write(", code)
+        self.assertNotIn("write_atomic(", code)
+        self.assertNotIn("resolve_romfs_output(", code)
+        self.assertNotIn("resolve_sd_root(", code)
+
     def test_native_header_and_64bit_coordinates(self):
         packet = native.encode_mesh(27, [
             (-.5, -.5, .5, 1., 1., 0., 0., 1.),
