@@ -99,6 +99,14 @@ public final class SkyClient {
 			}
 		}
 		if (!linked) {
+			// BotwCraft's standalone preview must open Minecraft's creative
+			// mirror world even if no Zelda bridge is available yet.
+			// This is NOT a verified native BOTW connection.
+			if (BlockPreview.enabled()) {
+				Minecraft preview = Minecraft.getInstance();
+				MirrorWorld.openWhenReady(preview);
+				BlockPreview.tick(preview);
+			}
 			return;
 		}
 
@@ -107,6 +115,13 @@ public final class SkyClient {
 		applyViewportSize(minecraft);
 		MirrorWorld.openWhenReady(minecraft);
 		BlockPreview.tick(minecraft);
+
+		if (BlockPreview.enabled()) {
+			// This preview has no authentic game terrain, player position or
+			// collision feed. Never apply Skyrim world teleports/holds/camera.
+			InputBridge.drain(minecraft);
+			return;
+		}
 
 		if (sky.menuOpen() || sky.loading()) {
 			InputBridge.releaseAll();
@@ -198,6 +213,9 @@ public final class SkyClient {
 	 * instead of letting them fall; Skyrim puts them where they belong when it's back.
 	 */
 	private static void freezeWhileUnlinked(Minecraft minecraft) {
+		if (BlockPreview.enabled()) {
+			return; // Standalone creative world retains native Minecraft physics.
+		}
 		LocalPlayer player = minecraft.player;
 		if (linked || !tookOver || player == null) {
 			return;
@@ -256,6 +274,12 @@ public final class SkyClient {
 
 	/** Freeze the player until Skyrim's collision around them has arrived. */
 	private static void holdUntilReady(Minecraft minecraft) {
+		if (BlockPreview.enabled()) {
+			// No native BOTW collision grid exists for this standalone island.
+			holdPos = null;
+			holdSince = 0;
+			return;
+		}
 		LocalPlayer player = minecraft.player;
 		if (!linked || player == null) {
 			return;
