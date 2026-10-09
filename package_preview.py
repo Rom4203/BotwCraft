@@ -29,6 +29,8 @@ def manifest(root):
         "bridge/control_bridge.py": root / "botw" / "control_bridge.py",
         "bridge/hud_overlay.py": root / "botw" / "hud_overlay.py",
         "bridge/launcher.py": root / "botw" / "launcher.py",
+        "bridge/prism_discovery.py": root / "botw" / "prism_discovery.py",
+        "prism_discovery.py": root / "botw" / "prism_discovery.py",
         "INSTALL_AND_PREVIEW.bat": root / "packaging" / "INSTALL_AND_PREVIEW.bat",
         "PREVIEW_BLOCKS.bat": root / "packaging" / "PREVIEW_BLOCKS.bat",
         "install_preview.py": root / "botw" / "install_preview.py",
