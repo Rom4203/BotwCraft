@@ -1,0 +1,120 @@
+"""Install BotwCraft's isolated Prism Minecraft creative-preview instance.
+
+No modifications to BOTW, Ryujinx, existing SkyCraft instances, games or saves.
+Requires an existing Prism Launcher installation and a Microsoft Minecraft login.
+Downloads Fabric API from Modrinth and validates the published SHA-512 hash.
+"""
+from pathlib import Path
+import hashlib
+import json
+import os
+import shutil
+import sys
+import urllib.parse
+import urllib.request
+
+INSTANCE = "BotwCraftPreview"
+MC = "26.3"
+USER_AGENT = "BotwCraft/0.1 (https://github.com/Rom4203/BotwCraft)"
+
+def modrinth_fabric_version(versions):
+    if not isinstance(versions, list):
+        raise ValueError("invalid Fabric API version response")
+    for entry in sorted(versions, key=lambda v: v.get("date_published", ""), reverse=True):
+        for file in entry.get("files", []):
+            if file.get("primary") and file.get("filename", "").endswith(".jar"):
+                return file
+    for entry in versions:
+        for file in entry.get("files", []):
+            if file.get("filename", "").endswith(".jar"):
+                return file
+    raise ValueError(f"No compatible Fabric API file for Minecraft {MC}")
+
+def download_fabric_api(mods):
+    endpoint = "https://api.modrinth.com/v2/project/P7dR8mSH/version?"
+    query = urllib.parse.urlencode({
+        "loaders": json.dumps(["fabric"]),
+        "game_versions": json.dumps([MC]),
+    })
+    req = urllib.request.Request(endpoint + query, headers={"User-Agent": USER_AGENT})
+    with urllib.request.urlopen(req, timeout=25) as response:
+        versions = json.loads(response.read(2_000_000))
+    metadata = modrinth_fabric_version(versions)
+    url = metadata.get("url", "")
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme != "https" or parsed.hostname not in ("cdn.modrinth.com", "cdn.modrinth.com.cn"):
+        raise ValueError("Fabric API download URL is not a recognized HTTPS Modrinth CDN")
+    filename = metadata["filename"]
+    if Path(filename).name != filename or not filename.lower().endswith(".jar"):
+        raise ValueError("invalid Fabric API filename")
+    expected = metadata.get("hashes", {}).get("sha512")
+    if not isinstance(expected, str) or len(expected) != 128:
+        raise ValueError("Fabric API lacks an expected SHA-512 integrity hash")
+    target = mods / filename
+    if target.exists() and hashlib.sha512(target.read_bytes()).hexdigest() == expected.lower():
+        print("[BotwCraft] Fabric API already installed and verified")
+        return target
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    with urllib.request.urlopen(req, timeout=45) as response:
+        content = response.read(45_000_000)
+    if len(content) >= 45_000_000 or hashlib.sha512(content).hexdigest() != expected.lower():
+        raise ValueError("Fabric API integrity check failed or download too large")
+    # Only manage Fabric API packages in this dedicated preview instance.
+    for old in mods.glob("fabric-api-*.jar"):
+        if old.name != filename:
+            old.unlink()
+    target.write_bytes(content)
+    print("[BotwCraft] Fabric API downloaded with SHA-512 verification:", filename)
+    return target
+
+def install(root, instance_root):
+    jar_dir = root / "minecraft_mods"
+    jars = [p for p in jar_dir.glob("skycraft-*.jar")
+            if all(s not in p.stem for s in ("sources", "dev", "javadoc"))]
+    if len(jars) != 1:
+        raise FileNotFoundError("Preview ZIP must contain exactly one compiled SkyCraft Fabric JAR")
+    template = root / "prism_template"
+    if not (template / "instance.cfg").is_file() or not (template / "mmc-pack.json").is_file():
+        raise FileNotFoundError("Prism instance template missing from preview ZIP")
+
+    instance_root.mkdir(parents=True, exist_ok=True)
+    cfg_path = instance_root / "instance.cfg"
+    if not cfg_path.exists():
+        cfg = (template / "instance.cfg").read_text(encoding="utf-8")
+        cfg = cfg.replace("name=SkyCraft", f"name={INSTANCE}")
+        cfg = cfg.replace(
+            "JvmArgs=--enable-native-access=ALL-UNNAMED -Dskycraft.startHidden=true",
+            "JvmArgs=--enable-native-access=ALL-UNNAMED -Dskycraft.startHidden=true "
+            "-Dskycraft.quitWithSkyrim=false -Dbotwcraft.experimentalBlocks=true")
+        cfg_path.write_text(cfg, encoding="utf-8")
+    pack = instance_root / "mmc-pack.json"
+    if not pack.exists():
+        shutil.copy2(template / "mmc-pack.json", pack)
+
+    mods = instance_root / ".minecraft" / "mods"
+    mods.mkdir(parents=True, exist_ok=True)
+    # Preserve other mods and world saves; update only our SkyCraft-derived JAR.
+    for old in mods.glob("skycraft-*.jar"):
+        if old.name != jars[0].name:
+            old.unlink()
+    shutil.copy2(jars[0], mods / jars[0].name)
+    download_fabric_api(mods)
+    print("[BotwCraft] Creative preview installed in:", instance_root)
+    print("[BotwCraft] Your existing Zelda and Minecraft worlds were not touched.")
+    return instance_root
+
+def main():
+    if sys.platform != "win32":
+        raise SystemExit("Windows required")
+    appdata = os.environ.get("APPDATA")
+    if not appdata:
+        raise SystemExit("APPDATA is missing; cannot locate Prism instances")
+    root = Path(__file__).resolve().parent
+    profile = Path(appdata) / "PrismLauncher" / "instances" / INSTANCE
+    try:
+        install(root, profile)
+    except (OSError, ValueError, KeyError, urllib.error.URLError) as exc:
+        raise SystemExit("[BotwCraft] Setup failed: " + str(exc))
+
+if __name__ == "__main__":
+    main()
