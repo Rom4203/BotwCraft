@@ -5,6 +5,12 @@ CETTE ARCHIVE EST UNE COMPILATION ARM64 REELLE, MAIS LA JOUABILITE
 COMPLETE MINECRAFT DANS HYRULE N'A PAS ENCORE ETE DEMONTREE.
 
 VERSION CIBLE : BOTW Switch 1.5.0 exclusivement.
+TON LOG DU 9 OCTOBRE INDIQUE BOTW 1.6.0, PAS 1.5.0 !
+Dans Ryujinx, clic droit sur BOTW > Gerer les mises a jour du titre :
+selectionner la mise a jour 1.5.0 si elle est installee. Ne pas renommer
+une mise a jour 1.6.0 en 1.5.0 : les adresses natives sont differentes.
+Si tu ne possedes que la 1.6.0, ne lance pas ce mod ; il faudra porter
+et valider les hooks pour cette version.
 Emulateur : Ryujinx sur Windows.
 Minecraft : Java 26.3, Fabric, Java 25, via Prism Launcher.
 
@@ -19,7 +25,14 @@ CE QUI EST INCLUS
 CORRECTION CRITIQUE :
 Le .wxlm doit être copié dans la SD virtuelle Ryujinx :
   sdcard/WiiXLaunch/mods/01007EF00011E000/botwcraft.wxlm
-Il NE DOIT PAS se trouver uniquement dans romfs du mod Ryujinx !
+Mais si Ryujinx refuse le montage SD (resultat 0x320002),
+WiiXLaunch doit pouvoir lire le module depuis :
+  mods/contents/01007ef00011e000/BotwCraft/romfs/WiiXLaunch/mods/botwcraft.wxlm
+Cette archive le copie aux DEUX endroits (RomFS ET SD virtuelle).
+Le code natif interdit desormais les ouvertures sur sd:/ quand le
+volume n'a pas pu etre monte pour eviter ResultFsNotMounted.
+Attention : le flux de blocs Minecraft par la SD ne peut pas
+fonctionner tant que Ryujinx refuse le montage SD.
 Le module subsdk9 va, lui, dans :
   mods/contents/01007ef00011e000/BotwCraft/exefs/subsdk9
 
@@ -42,7 +55,8 @@ COMMENT FAIRE LE PREMIER TEST
 OBJECTIF DU PREMIER TEST
 ------------------------
 - Zelda arrive-t-il au jeu sans planter ?
-- Le journal Ryujinx indique-t-il le chargement de botwcraft.wxlm ?
+- Le journal Ryujinx indique-t-il le chargement de botwcraft.wxlm
+  depuis RomFS si la SD est inaccessible ?
 - L'enregistrement NVN est-il confirmé ?
 - Des messages BotwCraft:NATIVE_POSITION_MILLI apparaissent-ils lorsque
   Link se déplace ? Si oui, la liaison Link -> Minecraft est active.
