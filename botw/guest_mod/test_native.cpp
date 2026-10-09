@@ -19,10 +19,12 @@ static uint32_t g_draw_calls = 0;
 static uint32_t g_draw_vertices = 0;
 static void (*g_draw)(uintptr_t, uintptr_t, int32_t, int32_t) = nullptr;
 static std::vector<uint8_t> g_file_contents;
+static uint32_t g_file_reads = 0;
 
 
 extern "C" {
 int32_t wiixl_import__wiixl_core__GameReadFile(const char* path, void* out, uint32_t cap) {
+    ++g_file_reads;
     if (!path || std::string(path).find("botwcraft/frame.bin") == std::string::npos)
         return -1;
     if (g_file_contents.empty() || g_file_contents.size() > cap) return -1;
@@ -87,49 +89,23 @@ int main() {
     assert(g_init_calls == 0);
     assert(g_tick_registrations == 0);
     assert(g_tick == nullptr);
-    assert(g_native_draw_registrations == 1);
-    assert(g_draw != nullptr);
-    // First game callback sees no frame; must not draw.
-    g_draw(1, 1, 1280, 720);
-    assert(g_draw_calls == 0);
-
-    BotwCraftMesh::Vertex triangle[3] = {
-        {-0.1f, -0.1f, 0.5f, 1.0f, 1.f, 0.f, 0.f, 1.f},
-        { 0.1f, -0.1f, 0.5f, 1.0f, 1.f, 0.f, 0.f, 1.f},
-        { 0.0f,  0.1f, 0.5f, 1.0f, 1.f, 0.f, 0.f, 1.f},
-    };
-    BotwCraftMesh::Header header{};
-    header.magic = BotwCraftMesh::kMagic;
-    header.version = BotwCraftMesh::kVersion;
-    header.frameId = 1;
-    header.vertexCount = 3;
-    header.payloadHash = BotwCraftMesh::Hash(triangle, sizeof(triangle));
-    g_file_contents.resize(sizeof(header) + sizeof(triangle));
-    std::memcpy(g_file_contents.data(), &header, sizeof(header));
-    std::memcpy(g_file_contents.data() + sizeof(header), triangle, sizeof(triangle));
-    assert(BotwCraftMesh::Valid(g_file_contents.data(), g_file_contents.size()));
-    for (int i = 0; i < 12; ++i) g_draw(1, 1, 1280, 720);
-    assert(g_draw_calls > 0);
-    assert(g_draw_vertices == 3);
-    assert(Contains("BotwCraft:MESH_ROMFS_READ_OK"));
-    assert(Contains("BotwCraft:MESH_FRAME_FIRST_ACCEPT"));
-    uint32_t priorCalls = g_draw_calls;
-    // Corruption is rejected without replacing the previous validated frame.
-    g_file_contents.back() ^= 0xff;
-    for (int i = 0; i < 12; ++i) g_draw(1, 1, 1280, 720);
-    assert(g_draw_calls > priorCalls);
-    assert(!BotwCraftMesh::Valid(g_file_contents.data(), g_file_contents.size()));
-    g_file_contents.clear();
+    // Ryujinx 1.3.3 crashed at nn::fs::ReadFile on the ROMFS mesh probe.
+    // This release MUST NOT register the callback or attempt guest file reads.
+    assert(g_native_draw_registrations == 0);
+    assert(g_draw == nullptr);
+    assert(g_file_reads == 0);
+    assert(Contains("BotwCraft:MESH_DISABLED"));
 
     // Future version where exact player offsets have been established:
     g_logs.clear();
     g_position_supported = true;
     WiiXLaunch_ModEntry();
-    assert(g_native_draw_registrations == 2);
+    assert(g_native_draw_registrations == 0);
     assert(g_init_calls == 1);
     assert(g_tick_registrations == 1);
     assert(g_tick != nullptr);
     for (int i=0; i<6; i++) g_tick();
     assert(Contains("NATIVE_POSITION_MILLI x=4250 y=12000 z=-3500"));
+    assert(g_file_reads == 0);
     return 0;
 }
