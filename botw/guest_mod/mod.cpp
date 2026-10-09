@@ -1,20 +1,18 @@
 // BotwCraft native BOTW adapter: real game API only, no synthetic position.
 //
-// This is the missing HOST half of SkyCraft, not an alternate Minecraft
-// implementation. WiiXLaunch currently reports that Switch Player::GetPosition
-// is unsupported, so on BOTW 1.0.0 the safe result is to refuse player hooks
-// rather than install an address from another executable and crash Ryujinx.
+// Safe BOTW 1.5.0 adapter. The ROMFS frame polling experiment crashed
+// Ryujinx 1.3.3 in nn::fs::ReadFile (0xD401). Never call GameReadFile,
+// register a mesh draw callback or attempt Switch filesystem I/O here.
+// Link's real native pose telemetry remains independent of mesh rendering.
 #include <cstdint>
 #include <wiixlaunch/imports/wiixl_core.h>
 #include <wiixlaunch/imports/botw_player.h>
 #include <wiixlaunch/imports/botw_input.h>
 #include <wiixlaunch/imports/botw_gfx.h>
 #include <wiixlaunch/mod_runtime.h>
-#include "../native_guest_mesh.hpp"
 
 namespace Core {
 WXL_USE_wiixl_core(Log);
-WXL_USE_wiixl_core(GameReadFile);
 }
 namespace Player {
 WXL_USE_botw_player(SupportsPosition);
@@ -27,97 +25,11 @@ WXL_USE_botw_input(SupportsInjection);
 }
 namespace Graphics {
 WXL_USE_botw_gfx(IsGX2);
-WXL_USE_botw_gfx(RegisterDraw);
-WXL_USE_botw_gfx(DrawMesh);
 }
 
 namespace {
-    // Read ROMFS first: WiiXLaunch loaded us from the game's mounted ROMFS
-    // even when MountSdCardForDebug was denied by Ryujinx.
-    // This is a relative path by design: FS::Candidates resolves it through
-    // the game's actual live ROMFS mount (often "content:").
-    //
-    // IMPORTANT: ROMFS overlay may be SNAPSHOTTED by Ryujinx at game start.
-    // This path guarantees neither live updates nor a functioning renderer.
-    constexpr const char* kMeshRomfsPath =
-        "WiiXLaunch/mods/botwcraft/frame.bin";
-    constexpr const char* kMeshSdPath =
-        "sd:/WiiXLaunch/mods/01007EF00011E000/botwcraft/frame.bin";
-    alignas(16) uint8_t meshBytes[BotwCraftMesh::kMaxBytes]{};
-    alignas(16) uint8_t stagingBytes[BotwCraftMesh::kMaxBytes]{};
-    uint32_t meshFrame = 0;
-    uint32_t meshCount = 0;
-    uint32_t gfxFrame = 0;
-    bool meshReady = false;
-    bool meshReadLogged = false;
-    bool romfsReadAvailable = false;
-    uint32_t meshPolls = 0;
-    uint32_t frame = 0;
-
-    void OnGameDraw(uintptr_t commandBuffer, uintptr_t dstTexture,
-                    int32_t width, int32_t height) {
-        (void)width; (void)height;
-        // 5 fps SD polling. Avoid I/O on every draw call. The GPU reuses the
-        // verified previous frame in between.
-        if ((++gfxFrame % 12) == 1 && Core::GameReadFile) {
-            ++meshPolls;
-            // ROMFS is mounted to load botwcraft.wxlm, whereas Ryujinx's
-            // MountSdCardForDebug may be denied (0x320002).
-            int32_t n =
-                Core::GameReadFile(kMeshRomfsPath, stagingBytes, sizeof(stagingBytes));
-            bool valid = n >= int32_t(sizeof(BotwCraftMesh::Header))
-                && BotwCraftMesh::Valid(stagingBytes, static_cast<size_t>(n));
-            const bool romfsValid = valid;
-            if (romfsValid && !romfsReadAvailable) {
-                romfsReadAvailable = true;
-                if (Core::Log)
-                    Core::Log("BotwCraft:MESH_ROMFS_READ_OK; "
-                              "static file accessible, live updates unverified");
-            }
-            // Switch SD fallback no more often than approximately 40 sec.
-            // Only use the contents if the complete BWC1 hash validates.
-            // Re-read ROMFS if a failed SD probe overwrote staging.
-            if (meshPolls % 240 == 0) {
-                const int32_t sd =
-                    Core::GameReadFile(kMeshSdPath, stagingBytes, sizeof(stagingBytes));
-                if (sd >= int32_t(sizeof(BotwCraftMesh::Header))
-                    && BotwCraftMesh::Valid(stagingBytes, static_cast<size_t>(sd))) {
-                    n = sd;
-                    valid = true;
-                    if (!meshReadLogged && Core::Log)
-                        Core::Log("BotwCraft:MESH_SD_READ_OK");
-                    meshReadLogged = true;
-                } else {
-                    n = Core::GameReadFile(kMeshRomfsPath,
-                                           stagingBytes, sizeof(stagingBytes));
-                    valid = n >= int32_t(sizeof(BotwCraftMesh::Header))
-                        && BotwCraftMesh::Valid(stagingBytes, static_cast<size_t>(n));
-                }
-            }
-            if (valid) {
-                const auto* h =
-                    reinterpret_cast<const BotwCraftMesh::Header*>(stagingBytes);
-                if (h->frameId != meshFrame || !meshReadLogged) {
-                    memcpy(meshBytes, stagingBytes, static_cast<size_t>(n));
-                    meshFrame = h->frameId;
-                    meshCount = h->vertexCount;
-                    meshReady = meshCount > 0;
-                    if (!meshReadLogged && Core::Log)
-                        Core::Log("BotwCraft:MESH_FRAME_FIRST_ACCEPT");
-                    else if (Core::Log)
-                        Core::Log("BotwCraft:MESH_FRAME_CHANGED");
-                    meshReadLogged = true;
-                }
-            }
-        }
-        if (meshReady && Graphics::DrawMesh && commandBuffer != 0 && dstTexture != 0) {
-            const float* packed = reinterpret_cast<const float*>(
-                meshBytes + sizeof(BotwCraftMesh::Header));
-            // 8 floats per vertex: native NVN normals shader input.
-            Graphics::DrawMesh(commandBuffer, dstTexture, packed, meshCount);
-        }
-    }
-
+    // Native graphics handoff disabled until a proven live IPC channel exists.
+    // The WiiXLaunch host's own NVN hooks remain under its control.
 
     void AppendLiteral(char*& ptr, const char* text) {
         while (*text) *ptr++ = *text++;
@@ -173,17 +85,9 @@ namespace {
 
 extern "C" __attribute__((used)) void WiiXLaunch_ModEntry() {
     Log("BotwCraft: native game adapter, strict capabilities; no preview world");
-    // Graphics and position are separate capabilities. The native NVN
-    // renderer can run even when BOTW Switch position is still unsupported.
-    if (Graphics::RegisterDraw && Graphics::DrawMesh && Core::GameReadFile) {
-        if (Graphics::RegisterDraw(&OnGameDraw)) {
-            Log("BotwCraft: native NVN renderer registered; awaiting MC mesh on SD");
-        } else {
-            Log("BotwCraft: native NVN draw registration refused");
-        }
-    } else {
-        Log("BotwCraft: native renderer import missing");
-    }
+    // Crash-proof telemetry mode: no native guest filesystem access.
+    Log("BotwCraft:MESH_DISABLED - ROMFS ReadFile caused Ryujinx abort 0xD401; "
+        "native render bridge unvalidated");
 
     if (!Player::SupportsPosition || Player::SupportsPosition() == 0) {
         Log("BotwCraft: BOTW_NATIVE_UNSUPPORTED: player position API absent");
