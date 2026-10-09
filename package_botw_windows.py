@@ -41,6 +41,7 @@ def archive_manifest(root):
         "bridge/host_bridge.py": root / "botw" / "host_bridge.py",
         "bridge/ryujinx_log_relay.py": root / "botw" / "ryujinx_log_relay.py",
         "bridge/control_bridge.py": root / "botw" / "control_bridge.py",
+        "bridge/native_mesh_bridge.py": root / "botw" / "native_mesh_bridge.py",
         "bridge/hud_overlay.py": root / "botw" / "hud_overlay.py",
         "bridge/launcher.py": root / "botw" / "launcher.py",
         "bridge/prism_discovery.py": root / "botw" / "prism_discovery.py",
