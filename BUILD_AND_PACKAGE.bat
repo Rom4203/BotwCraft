@@ -31,7 +31,7 @@ if not exist "fabric\\gradlew.bat" (
  exit /b 1
 )
 pushd "fabric"
-call gradlew.bat --no-daemon remapJar
+call gradlew.bat --no-daemon build
 set "MC_RC=%ERRORLEVEL%"
 popd
 if not "%MC_RC%"=="0" (
