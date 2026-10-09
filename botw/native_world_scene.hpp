@@ -115,10 +115,10 @@ inline bool BuildViewProjection(const float eye[3], const float at[3],
     };
     if (!normalize(forward)) return false;
     float right[3]{};
-    cross(forward,sourceUp,right);
+    cross(sourceUp,forward,right);
     if (!normalize(right)) return false;
     float up[3]{};
-    cross(right,forward,up);
+    cross(forward,right,up);
     if (!normalize(up)) return false;
 
     // Vertical focal = cot(game vertical FOV / 2), provided by Zelda's
