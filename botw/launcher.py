@@ -47,6 +47,7 @@ def build_commands(preview_blocks=False):
     ]
     if not preview_blocks:
         scripts.append(("ryujinx_log_relay.py", []))
+        scripts.append(("native_mesh_bridge.py", []))
     scripts.extend([
         ("hud_overlay.py", ["--key-background", "--fps", "8"] if preview_blocks else []),
         ("control_bridge.py", []),
