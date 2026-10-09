@@ -18,27 +18,27 @@ except ImportError:  # Standalone ZIP bridge/launcher.py
 ROOT = Path(__file__).resolve().parent
 
 def start_minecraft(preview_blocks=False):
-    if not preview_blocks:
-        return None
     prism = locate_prism(allow_picker=True)
     if prism is None:
         raise RuntimeError("Prism Launcher introuvable : sélectionne prismlauncher.exe "
                            "dans la fenêtre de recherche")
     data_dir = prism_data_dir(prism)
-    expected_instance = data_dir / "instances" / "BotwCraftPreview"
+    profile_name = "BotwCraftPreview" if preview_blocks else "BotwCraftNative"
+    expected_instance = data_dir / "instances" / profile_name
     if not expected_instance.is_dir():
         raise RuntimeError(
-            "L'instance Minecraft BotwCraftPreview n'existe pas dans "
+            f"L'instance Minecraft {profile_name} n'existe pas dans "
             f"{data_dir}. Relance INSTALL_AND_PREVIEW.bat.")
     env = os.environ.copy()
     opts = env.get("JAVA_TOOL_OPTIONS", "")
-    opts += (" -Dbotwcraft.experimentalBlocks=true"
-             " -Dskycraft.startHidden=false -Dskycraft.showWindow=true"
+    if preview_blocks:
+        opts += " -Dbotwcraft.experimentalBlocks=true"
+    opts += (" -Dskycraft.startHidden=false -Dskycraft.showWindow=true"
              " -Dskycraft.quitWithSkyrim=false")
     env["JAVA_TOOL_OPTIONS"] = opts.strip()
     print(f"[BotwCraft] Launching Minecraft through {prism}", flush=True)
     return subprocess.Popen(
-        [str(prism), "--dir", str(data_dir), "--launch", "BotwCraftPreview"],
+        [str(prism), "--dir", str(data_dir), "--launch", profile_name],
         env=env, cwd=prism.parent)
 
 def build_commands(preview_blocks=False):
