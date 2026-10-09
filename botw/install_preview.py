@@ -8,6 +8,7 @@ from pathlib import Path
 import hashlib
 import json
 import os
+import re
 import shutil
 import sys
 import urllib.parse
@@ -72,6 +73,40 @@ def download_fabric_api(mods):
     print("[BotwCraft] Fabric API downloaded with SHA-512 verification:", filename)
     return target
 
+def preview_jvm_config(content):
+    """Enable the standalone Minecraft preview in an existing Prism instance.
+
+    Older ZIPs only set JVM flags on first install. Manually created Prism
+    profiles (the common user case) silently lacked botwcraft.experimentalBlocks
+    and sat on the vanilla title screen. Preserve other instance settings.
+    """
+    flags = (
+        "-Dbotwcraft.experimentalBlocks=true",
+        "-Dskycraft.quitWithSkyrim=false",
+        "-Dskycraft.showWindow=true",
+        "-Dskycraft.startHidden=false",
+    )
+    lines = content.splitlines()
+    if "[General]" not in lines:
+        lines.insert(0, "[General]")
+    jvm_index = next((i for i, line in enumerate(lines)
+                      if line.startswith("JvmArgs=")), None)
+    if jvm_index is None:
+        lines.append("JvmArgs=--enable-native-access=ALL-UNNAMED " + " ".join(flags))
+    else:
+        old = lines[jvm_index].partition("=")[2]
+        for key in ("botwcraft.experimentalBlocks", "skycraft.quitWithSkyrim",
+                    "skycraft.showWindow", "skycraft.startHidden"):
+            old = re.sub(r"(?<!\\S)-D" + re.escape(key) + r"=\\S+", "", old)
+        lines[jvm_index] = "JvmArgs=" + " ".join((old.strip(), *flags)).strip()
+    override = next((i for i, line in enumerate(lines)
+                     if line.startswith("OverrideJavaArgs=")), None)
+    if override is not None:
+        lines[override] = "OverrideJavaArgs=true"
+    else:
+        lines.append("OverrideJavaArgs=true")
+    return "\\n".join(lines) + "\\n"
+
 def install(root, instance_root):
     jar_dir = root / "minecraft_mods"
     jars = [p for p in jar_dir.glob("skycraft-*.jar")
@@ -84,14 +119,15 @@ def install(root, instance_root):
 
     instance_root.mkdir(parents=True, exist_ok=True)
     cfg_path = instance_root / "instance.cfg"
-    if not cfg_path.exists():
+    if cfg_path.exists():
+        cfg = cfg_path.read_text(encoding="utf-8")
+    else:
         cfg = (template / "instance.cfg").read_text(encoding="utf-8")
         cfg = cfg.replace("name=SkyCraft", f"name={INSTANCE}")
-        cfg = cfg.replace(
-            "JvmArgs=--enable-native-access=ALL-UNNAMED -Dskycraft.startHidden=true",
-            "JvmArgs=--enable-native-access=ALL-UNNAMED -Dskycraft.startHidden=true "
-            "-Dskycraft.quitWithSkyrim=false -Dbotwcraft.experimentalBlocks=true")
-        cfg_path.write_text(cfg, encoding="utf-8")
+    corrected = preview_jvm_config(cfg)
+    if corrected != cfg:
+        cfg_path.write_text(corrected, encoding="utf-8")
+        print("[BotwCraft] Profil Prism mis à jour : monde automatique + fenêtre visible")
     pack = instance_root / "mmc-pack.json"
     if not pack.exists():
         shutil.copy2(template / "mmc-pack.json", pack)
