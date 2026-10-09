@@ -3,6 +3,7 @@
 #include <cassert>
 #include <cstdint>
 #include <cstring>
+#include <cstdlib>
 #include <string>
 #include <vector>
 #include "../native_guest_mesh.hpp"
@@ -103,6 +104,56 @@ int main() {
     // An invalid graphics target must NOT trigger a native draw.
     g_draw(0, 0, 0, 0);
     assert(g_draw_calls == 1);
+
+    // The guest exposes its OWN bounded BWC1 buffer address; no Zelda
+    // offsets are guessed. Simulate a debugger writing a complete packet.
+    std::string pointerLine;
+    for (const auto& line : g_logs) {
+        if (line.find("BotwCraft:GDB_MESH_BUFFER_ADDR=0x") == 0) {
+            pointerLine = line;
+        }
+    }
+    assert(!pointerLine.empty());
+    auto hexAddress = pointerLine.substr(pointerLine.find("0x") + 2);
+    uintptr_t guestAddr = static_cast<uintptr_t>(
+        std::strtoull(hexAddress.c_str(), nullptr, 16));
+    assert(guestAddr != 0);
+
+    BotwCraftMesh::Vertex triangle[3] = {
+        {-0.1f,-0.1f,0.5f,1.0f,1,0,0,1},
+        { 0.1f,-0.1f,0.5f,1.0f,0,1,0,1},
+        { 0.0f, 0.1f,0.5f,1.0f,0,0,1,1}
+    };
+    BotwCraftMesh::Header hdr{BotwCraftMesh::kMagic,
+                             BotwCraftMesh::kVersion, 7, 3,
+                             BotwCraftMesh::Hash(triangle, sizeof(triangle)),
+                             {0, 0, 0}};
+    std::memcpy(reinterpret_cast<void*>(guestAddr), &hdr, sizeof(hdr));
+    std::memcpy(reinterpret_cast<uint8_t*>(guestAddr) + sizeof(hdr),
+                triangle, sizeof(triangle));
+    g_draw(1, 1, 1920, 1080);
+    assert(g_draw_calls == 2 && g_draw_vertices == 3);
+    assert(Contains("BotwCraft:GDB_MESH_FRAME_ACCEPTED"));
+    assert(g_file_reads == 0);
+
+    // 6 vertices must reach the NVN API, not only the old fixed triangle.
+    BotwCraftMesh::Vertex twoTriangles[6] = {
+        triangle[0], triangle[1], triangle[2],
+        triangle[0], triangle[2], triangle[1]
+    };
+    hdr.frameId = 8;
+    hdr.vertexCount = 6;
+    hdr.payloadHash = BotwCraftMesh::Hash(twoTriangles, sizeof(twoTriangles));
+    std::memcpy(reinterpret_cast<void*>(guestAddr), &hdr, sizeof(hdr));
+    std::memcpy(reinterpret_cast<uint8_t*>(guestAddr) + sizeof(hdr),
+                twoTriangles, sizeof(twoTriangles));
+    g_draw(1, 1, 1920, 1080);
+    assert(g_draw_calls == 3 && g_draw_vertices == 6);
+
+    // Corrupt payload safely falls back to the original visual triangle.
+    reinterpret_cast<uint8_t*>(guestAddr)[sizeof(hdr) + 4] ^= 0xff;
+    g_draw(1, 1, 1920, 1080);
+    assert(g_draw_calls == 4 && g_draw_vertices == 3);
 
     // Future version where exact player offsets have been established:
     g_logs.clear();
