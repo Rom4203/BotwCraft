@@ -24,7 +24,7 @@ jobs:
         working-directory: fabric
         run: |
           chmod +x gradlew
-          ./gradlew --no-daemon --stacktrace remapJar
+          ./gradlew --no-daemon --stacktrace build
       - uses: actions/upload-artifact@v4
         if: success()
         with:
