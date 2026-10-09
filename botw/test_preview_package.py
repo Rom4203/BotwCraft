@@ -79,10 +79,10 @@ class Tests(unittest.TestCase):
             self.assertIn("-Dbotwcraft.experimentalBlocks=true", cfg)
 
     def test_existing_manual_prism_profile_gets_preview_java_flags(self):
-        existing = ("[General]\\nname=BotwCraftPreview\\n"
-                    "OverrideJavaArgs=false\\n"
-                    "JvmArgs=-Xmx3G -Dskycraft.startHidden=true\\n"
-                    "MinMemAlloc=512\\n")
+        existing = ("[General]\nname=BotwCraftPreview\n"
+                    "OverrideJavaArgs=false\n"
+                    "JvmArgs=-Xmx3G -Dskycraft.startHidden=true\n"
+                    "MinMemAlloc=512\n")
         out = install_preview.preview_jvm_config(existing)
         self.assertIn("OverrideJavaArgs=true", out)
         self.assertIn("-Xmx3G", out)
