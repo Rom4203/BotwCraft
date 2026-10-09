@@ -85,12 +85,12 @@ struct ViewProjection {
 // This is deliberately NOT called with Minecraft's yaw/pitch. A Zelda
 // camera hook must supply the vectors and actual FOV/aspect from the game.
 inline bool BuildViewProjection(const float eye[3], const float at[3],
-                                const float sourceUp[3], float fovRadians,
+                                const float sourceUp[3], float verticalFocal,
                                 float aspect, float zNear, float zFar,
                                 ViewProjection& out) {
     out.ready = false;
     if (!eye || !at || !sourceUp) return false;
-    if (!(fovRadians > 0.1f && fovRadians < 3.0f &&
+    if (!(verticalFocal > 0.05f && verticalFocal < 100.0f &&
           aspect > 0.1f && aspect < 10.0f &&
           zNear > 0.001f && zFar > zNear)) return false;
     for (int i=0;i<3;i++)
@@ -121,12 +121,9 @@ inline bool BuildViewProjection(const float eye[3], const float at[3],
     cross(right,forward,up);
     if (!normalize(up)) return false;
 
-    // tan(fov/2) from sin/cos compiler builtins, avoids a runtime libm
-    // dependency for the ARM64 freestanding WiiXLaunch guest module.
-    float sine=__builtin_sinf(fovRadians*0.5f);
-    float cosine=__builtin_cosf(fovRadians*0.5f);
-    if (!(sine > 1.e-6f && cosine > 0.0f)) return false;
-    float fy=cosine/sine;
+    // Vertical focal = cot(game vertical FOV / 2), provided by Zelda's
+    // own current projection matrix. No trig/libm guesswork on Switch.
+    float fy=verticalFocal;
     float fx=fy/aspect;
     float depthA=zFar/(zFar-zNear);
     float depthB=-zNear*zFar/(zFar-zNear);
