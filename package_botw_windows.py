@@ -22,7 +22,7 @@ def find_minecraft_jar(root):
     )
     if not matches:
         raise FileNotFoundError(
-            "Minecraft Fabric mod missing. Build fabric/gradlew.bat remapJar using Java 25 first."
+            "Minecraft Fabric mod missing. Build fabric/gradlew.bat build using Java 25 first."
         )
     return matches[0]
 
@@ -45,6 +45,7 @@ def archive_manifest(root):
         "bridge/hud_overlay.py": root / "botw" / "hud_overlay.py",
         "bridge/launcher.py": root / "botw" / "launcher.py",
         "START_BRIDGE.bat": root / "packaging" / "START_BRIDGE.bat",
+        "PREVIEW_BLOCKS.bat": root / "packaging" / "PREVIEW_BLOCKS.bat",
         "README_INSTALL.txt": root / "packaging" / "README_INSTALL.txt",
         "THIRD-PARTY-NOTICES.md": root / "THIRD-PARTY-NOTICES.md",
         "LICENSE": root / "LICENSE",
