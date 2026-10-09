@@ -17,18 +17,26 @@ import net.minecraft.world.level.block.Blocks;
  * and saving the real blocks. This is NOT BOTW terrain collision.
  */
 public final class BlockPreview {
-    private static final boolean ENABLED = Boolean.getBoolean("botwcraft.experimentalBlocks");
+    // The Prism instance installs this marker in .minecraft. This survives
+    // Prism launcher JVM argument overrides and manual instance creation.
+    // No global SkyCraft behaviour is changed in other Minecraft profiles.
+    private static final String PREVIEW_MARKER = "botwcraft.preview";
     private static volatile UUID initializedPlayer;
     private static volatile UUID pendingPlayer;
 
     private BlockPreview() {}
 
     public static boolean enabled() {
-        return ENABLED;
+        if (Boolean.getBoolean("botwcraft.experimentalBlocks")) {
+            return true;
+        }
+        Minecraft client = Minecraft.getInstance();
+        return client != null && client.gameDirectory != null &&
+            new java.io.File(client.gameDirectory, PREVIEW_MARKER).isFile();
     }
 
     public static void tick(Minecraft minecraft) {
-        if (!ENABLED || minecraft.player == null || minecraft.level == null) {
+        if (!enabled() || minecraft.player == null || minecraft.level == null) {
             initializedPlayer = null;
             pendingPlayer = null;
             return;
