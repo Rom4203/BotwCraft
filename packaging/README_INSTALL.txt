@@ -20,10 +20,12 @@ NEW WORKFLOW (NO AUTOMATIC LAUNCHES, NO JAVA FLAG OVERRIDES)
      /botwcraft connect       Allow the SkyCraft v11 link
      /botwcraft status        Check for real BOTW position telemetry
      /botwcraft disconnect    Disconnect without stopping Minecraft
-   Minecraft will NOT open a mirror world before a manual connection AND
-   a genuine game pose has been received.
-6. Launch BOTW in Ryujinx. Only authentic Switch BOTW 1.5.0 hooks are
-   currently guarded for use, and even those have not been runtime validated.
+   Minecraft will NEVER open a mirror world or teleport your character.
+   The /botwcraft connect command is TELEMETRY-ONLY: real Link coordinates
+   are received and Minecraft's existing world is exported for diagnostics.
+   This is a test and does not synchronize gameplay or collision.
+6. Launch BOTW 1.5.0 in Ryujinx. Native Link position telemetry has now
+   been observed in actual user logs. Graphics file transport is unresolved.
 
 BOTW 1.6.0 IS NOT SUPPORTED
 ---------------------------
@@ -60,3 +62,28 @@ derived from SkyCraft. This does NOT mean Skyrim is actually running.
 NO NINTENDO GAME FILES, KEYS, ROMS OR FIRMWARE ARE DISTRIBUTED.
 
 Repository: https://github.com/Rom4203/BotwCraft
+
+OCTOBER 9 TELEMETRY MILESTONE AND RUNTIME SAFETY FIX
+---------------------------------------------------
+Actual BOTW 1.5.0 native logs include:
+  BotwCraft:NATIVE_POSITION_MILLI x=-1125660 y=237270 z=1903970
+Windows relay confirms these are forwarded into the SkyCraft v11 host.
+The former Fabric code automatically teleported its player to this Link
+position, despite having no Hyrule collision/terrain in the Minecraft
+world. The same Skyrim-only mode suppressed level rendering and mouse
+capture, leading to a black world, deaths and an unlocked mouse.
+
+THIS BUILD DISABLES ALL THREE BEHAVIORS COMPLETELY.
+  /botwcraft connect      Activate telemetry only.
+  /botwcraft status       Show the measured Link X/Y/Z, if fresh.
+  /botwcraft disconnect   Disconnect, leaving both games and saves alone.
+Any existing Minecraft world remains the user's own. The mod does not
+change its rules, inventory, spawn, movement, pause handling or options.
+DO NOT enable old experimentalBlocks JVM flags or old preview marker.
+
+Known native graphics issue: WiiXLaunch repeatedly reports that the
+Ryujinx guest filesystem cannot open sd:/WiiXLaunch/.../frame.bin.
+Host output files alone do not prove that the guest SD filesystem is
+mounted. Without a supported live guest-readable channel, no native
+Minecraft mesh rendering is validated. Do not force a mount with
+unverified FS hooks; a previous unsupported path aborted Ryujinx.
