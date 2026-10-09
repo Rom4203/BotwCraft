@@ -36,6 +36,13 @@ class NativeMeshTests(unittest.TestCase):
         self.assertEqual(len(verts), 3)
         self.assertTrue(all(v[3] == 1 for v in verts))
 
+    def test_disconnected_minecraft_does_not_leave_blocks_in_zelda(self):
+        memory = bytearray(64)
+        struct.pack_into("<Q", memory, 0x18, 1000)
+        self.assertTrue(native.minecraft_heartbeat_is_live(memory, 1200))
+        self.assertFalse(native.minecraft_heartbeat_is_live(memory, 7000))
+        self.assertFalse(native.minecraft_heartbeat_is_live(memory, 500))
+
     def test_mc_projection_rejects_behind_camera(self):
         camera = (0., 80., 0., 0., 0.)
         self.assertIsNone(native.project((0., 80., -9.), camera))
