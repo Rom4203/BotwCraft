@@ -123,6 +123,7 @@ def main():
     try:
         root = find_ryujinx_root(args.ryujinx_data)
         install(bundle, root)
+        (bundle / "ryujinx-data.txt").write_text(str(root) + "\n", encoding="utf-8")
     except (OSError, ValueError) as exc:
         raise SystemExit(f"[BotwCraft] ERREUR installation : {exc}")
 
