@@ -8,6 +8,7 @@ on:
       - 'botw/guest_mod/**'
       - 'botw/setup_wiixlaunch.py'
       - 'botw/guard_switch_player_hook.py'
+      - 'botw/patch_botw15_player_pose.py'
       - 'BUILD_AND_PACKAGE.bat'
       - 'build_botw_windows.bat'
       - '.github/workflows/botw-native-sources.yml'
@@ -18,6 +19,7 @@ on:
       - 'botw/guest_mod/**'
       - 'botw/setup_wiixlaunch.py'
       - 'botw/guard_switch_player_hook.py'
+      - 'botw/patch_botw15_player_pose.py'
       - '.github/workflows/botw-native-sources.yml'
 jobs:
   validate-native:
@@ -34,6 +36,13 @@ jobs:
         run: python botw/setup_wiixlaunch.py
       - name: Guard unverified Switch hooks
         run: python botw/guard_switch_player_hook.py
+      - name: Install BOTW 1.5.0 fingerprint-locked PlayerInfo pose callback
+        run: python botw/patch_botw15_player_pose.py
+      - name: Verify native pose callback is installed and guarded
+        run: |
+          grep -q "BotwCraft15::Register();" WiiXLaunch/src/main.cpp
+          grep -q "0xA982D2BC" WiiXLaunch/include/wiixlaunch/botwcraft_switch15_pose.hpp
+          grep -q "0x854BA8" WiiXLaunch/include/wiixlaunch/botwcraft_switch15_pose.hpp
       - name: Compile native guest against actual WiiXLaunch SDK
         run: |
           c++ -std=c++20 -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer -Wall -Wextra \
