@@ -90,6 +90,7 @@ def install(bundle, ryujinx_root, backup_root=None):
     mods = root / "mods" / "contents" / TITLE_ID / MOD_NAME
     guest = root / "sdcard" / "WiiXLaunch" / "mods" / TITLE_ID_UPPER / "botwcraft.wxlm"
     new_exefs = mods / "exefs" / "subsdk9"
+    new_romfs_guest = mods / "romfs" / "WiiXLaunch" / "mods" / "botwcraft.wxlm"
     backup_root = Path(backup_root or bundle / "backups")
     backup = backup_root / time.strftime("%Y%m%d-%H%M%S")
     items = []
@@ -104,9 +105,13 @@ def install(bundle, ryujinx_root, backup_root=None):
             shutil.move(str(original), str(saved))
             print(f"[BotwCraft] Sauvegarde de l'ancien mod : {saved}")
     _copy_atomically(source_exefs, new_exefs)
+    # Ryujinx 1.3.3 may refuse Switch MountSdCardForDebug. WiiXLaunch
+    # then reads modules from the title's mounted ROMFS instead.
+    _copy_atomically(source_guest, new_romfs_guest)
     _copy_atomically(source_guest, guest)
     print("[BotwCraft] Module natif 1.5.0 installé :")
     print("  ExeFS:", new_exefs)
+    print("  RomFS (fallback quand la SD est inaccessible):", new_romfs_guest)
     print("  SD   :", guest)
     print("[BotwCraft] Aucune sauvegarde Zelda modifiée.")
     print("[BotwCraft] Le lancement et le fonctionnement en jeu restent à vérifier.")
