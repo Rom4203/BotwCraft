@@ -53,8 +53,10 @@ class FakeGdb:
                         self.stopped = True
                         self.send(conn,"T05thread:1;")
                     elif command == "c":
+                        # The ACTUAL GDB remote protocol sends only the "+"
+                        # packet ACK here. It sends Txx only when the debuggee
+                        # stops again. Sending "OK" in this fake masked a bug.
                         self.stopped = False
-                        self.send(conn, "OK")
                     elif command.startswith("M"):
                         assert self.stopped, "guest running during unsafe write"
                         coords,data = command[1:].split(":",1)
@@ -81,7 +83,10 @@ class GdbTests(unittest.TestCase):
         with gdb.RspClient(port=fake.port) as client:
             client.stop(first=True)
             client.write_memory(fake.address,packet)
+            started = time.monotonic()
             client.resume()
+            self.assertLess(time.monotonic() - started, 0.5,
+                            "GDB continue must not wait for the next stop packet")
             client.stop()
             client.resume()
         fake.thread.join(timeout=3)
