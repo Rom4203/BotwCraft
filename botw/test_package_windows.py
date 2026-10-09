@@ -15,6 +15,7 @@ class PackageTests(unittest.TestCase):
             "botw/host_bridge.py",
             "botw/ryujinx_log_relay.py",
             "botw/control_bridge.py",
+            "botw/native_mesh_bridge.py",
             "botw/hud_overlay.py",
             "botw/launcher.py",
             "botw/prism_discovery.py",
@@ -38,13 +39,14 @@ class PackageTests(unittest.TestCase):
             with zipfile.ZipFile(out) as archive:
                 files = archive.namelist()
                 self.assertEqual(archive.testzip(), None)
-                self.assertEqual(len(files), 14)
+                self.assertEqual(len(files), 15)
                 self.assertTrue(any(p.endswith("/exefs/subsdk9") for p in files))
                 self.assertTrue(any(p.endswith("/mods/botwcraft.wxlm") for p in files))
                 self.assertIn("minecraft_mods/skycraft-0.1.2.jar", files)
                 self.assertIn("START_BRIDGE.bat", files)
                 self.assertIn("PREVIEW_BLOCKS.bat", files)
                 self.assertIn("bridge/control_bridge.py", files)
+                self.assertIn("bridge/native_mesh_bridge.py", files)
                 self.assertIn("bridge/hud_overlay.py", files)
                 self.assertIn("bridge/launcher.py", files)
                 self.assertIn("bridge/prism_discovery.py", files)
