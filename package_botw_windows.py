@@ -49,6 +49,11 @@ def archive_manifest(root):
         "bridge/prism_discovery.py": root / "botw" / "prism_discovery.py",
         "INSTALL_NATIVE_TEST.bat": root / "packaging" / "INSTALL_NATIVE_TEST.bat",
         "install_native.py": root / "botw" / "install_native.py",
+        "install_native_mc.py": root / "botw" / "install_native_mc.py",
+        "install_preview.py": root / "botw" / "install_preview.py",
+        "prism_discovery.py": root / "botw" / "prism_discovery.py",
+        "prism_template/instance.cfg": root / "tools" / "minecraft-bundle" / "Prism" / "instances" / "SkyCraft" / "instance.cfg",
+        "prism_template/mmc-pack.json": root / "tools" / "minecraft-bundle" / "Prism" / "instances" / "SkyCraft" / "mmc-pack.json",
         "START_BRIDGE.bat": root / "packaging" / "START_BRIDGE.bat",
 
         "README_INSTALL.txt": root / "packaging" / "README_INSTALL.txt",
