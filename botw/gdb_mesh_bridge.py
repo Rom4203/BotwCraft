@@ -192,11 +192,17 @@ def run(args):
     print("[BotwCraft GDB] Start this script INSTEAD of the diagnostic mesh reader.",
           flush=True)
     guest_log = log_source(args.log)
+    print(f"[BotwCraft GDB] Current Ryujinx log source: "
+          f"{guest_log or 'NOT FOUND'}", flush=True)
     kernel = ctypes.windll.kernel32
     kernel.GetTickCount64.restype = ctypes.c_uint64
     with mmap.mmap(-1, mesh.MAPPING_BYTES, tagname=mesh.MAPPING_NAME) as shared:
         while True:
-            guest_log = log_source(args.log)
+            updated_log = log_source(args.log)
+            if updated_log != guest_log:
+                guest_log = updated_log
+                print(f"[BotwCraft GDB] Ryujinx log changed: "
+                      f"{guest_log or 'NOT FOUND'}", flush=True)
             address = read_guest_buffer_address(guest_log)
             if address:
                 break
