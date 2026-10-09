@@ -20,6 +20,9 @@ if not exist "%PY%" (
  echo [ERROR] Python not found at "%PY%"
  goto :failed
 )
+rem Keep WiiXLaunch and its BOTW submodule pinned even when called directly.
+"%PY%" "%ROOT%botw\setup_wiixlaunch.py"
+if errorlevel 1 goto :failed
 rem Enforce source safety even if this helper is run without BUILD_AND_PACKAGE.bat.
 if not exist "%ROOT%botw\guard_switch_player_hook.py" (
  echo [ERROR] Missing Switch hook safety guard.
