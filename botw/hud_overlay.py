@@ -85,7 +85,7 @@ def remove_void_background(pixels, width, height, tolerance=48):
     out = bytearray(pixels)
     for i in range(0, len(out), 4):
         if max(abs(out[i + j] - key[j]) for j in range(3)) <= t:
-            out[i:i + 4] = b"\\x00\\x00\\x00\\x00"
+            out[i:i + 4] = bytes(4)
     return out
 
 class SharedOverlay:
