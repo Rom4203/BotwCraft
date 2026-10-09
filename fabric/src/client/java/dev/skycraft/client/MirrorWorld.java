@@ -151,7 +151,7 @@ public final class MirrorWorld {
 		SkyCraft.LOG.info("SkyCraft: creating mirror world");
 		LevelSettings settings = new LevelSettings(
 			SkyCraft.WORLD_NAME,
-			Boolean.getBoolean("botwcraft.experimentalBlocks") ? GameType.CREATIVE : GameType.SURVIVAL,
+			BlockPreview.enabled() ? GameType.CREATIVE : GameType.SURVIVAL,
 			new LevelSettings.DifficultySettings(Difficulty.NORMAL, false, false),
 			true,
 			WorldDataConfiguration.DEFAULT
