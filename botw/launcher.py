@@ -72,6 +72,14 @@ def main():
             for name, proc in processes:
                 code = proc.poll()
                 if code is not None:
+                    if name == "hud_overlay.py":
+                        if not getattr(proc, "_botwcraft_warned_hud", False):
+                            print("[BotwCraft] WARNING: optional Windows HUD overlay exited "
+                                  f"(code {code}). Minecraft and the Zelda telemetry bridge "
+                                  "remain active. Run CHECK_HUD.bat to diagnose capture.",
+                                  flush=True)
+                            proc._botwcraft_warned_hud = True
+                        continue
                     if name == "native_mesh_bridge.py":
                         if not warned_mesh:
                             print("[BotwCraft] WARNING: mesh rendering process stopped "
