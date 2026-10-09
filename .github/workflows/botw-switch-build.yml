@@ -8,6 +8,7 @@ on:
       - 'botw/guest_mod/**'
       - 'botw/patch_botw15_player_pose.py'
       - 'botw/guard_switch_player_hook.py'
+      - 'botw/guard_switch_fs.py'
       - 'botw/native_guest_mesh.hpp'
       - 'botw/setup_wiixlaunch.py'
       - 'WiiXLaunch'
@@ -23,6 +24,7 @@ on:
       - 'botw/guest_mod/**'
       - 'botw/patch_botw15_player_pose.py'
       - 'botw/guard_switch_player_hook.py'
+      - 'botw/guard_switch_fs.py'
       - 'botw/native_guest_mesh.hpp'
       - 'botw/setup_wiixlaunch.py'
 jobs:
@@ -40,6 +42,8 @@ jobs:
         run: python botw/setup_wiixlaunch.py
       - name: Guard invalid game hooks
         run: python botw/guard_switch_player_hook.py
+      - name: Guard unmounted Switch SD filesystem access
+        run: python botw/guard_switch_fs.py
       - name: Apply Switch 1.5.0 Link pose reader
         run: python botw/patch_botw15_player_pose.py
       - name: Cross-compile the REAL Switch subsdk9 and guest wxlm
