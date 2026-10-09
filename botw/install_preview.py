@@ -98,7 +98,10 @@ def preview_jvm_config(content):
         for key in ("botwcraft.experimentalBlocks", "skycraft.quitWithSkyrim",
                     "skycraft.showWindow", "skycraft.startHidden"):
             old = re.sub(r"(?<!\S)-D" + re.escape(key) + r"=\S+", "", old)
-        lines[jvm_index] = "JvmArgs=" + " ".join((old.strip(), *flags)).strip()
+        base = old.strip()
+        if "--enable-native-access=ALL-UNNAMED" not in base.split():
+            base = (base + " --enable-native-access=ALL-UNNAMED").strip()
+        lines[jvm_index] = "JvmArgs=" + " ".join((base, *flags)).strip()
     override = next((i for i, line in enumerate(lines)
                      if line.startswith("OverrideJavaArgs=")), None)
     if override is not None:
