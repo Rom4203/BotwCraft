@@ -10,33 +10,34 @@ import subprocess
 import sys
 import time
 
-ROOT = Path(__file__).resolve().parent
+try:
+    from .prism_discovery import locate_prism, prism_data_dir
+except ImportError:  # Standalone ZIP bridge/launcher.py
+    from prism_discovery import locate_prism, prism_data_dir
 
-def prism_candidates():
-    local = Path(os.environ.get("LOCALAPPDATA", ""))
-    appdata = Path(os.environ.get("APPDATA", ""))
-    pfile = Path(os.environ.get("ProgramFiles", "C:/Program Files"))
-    env = os.environ.get("BOTWCRAFT_PRISM")
-    if env:
-        yield Path(env)
-    yield local / "Programs" / "PrismLauncher" / "prismlauncher.exe"
-    yield pfile / "PrismLauncher" / "prismlauncher.exe"
-    yield appdata / "PrismLauncher" / "prismlauncher.exe"
+ROOT = Path(__file__).resolve().parent
 
 def start_minecraft(preview_blocks=False):
     if not preview_blocks:
         return None
-    prism = next((p for p in prism_candidates() if p.is_file()), None)
+    prism = locate_prism(allow_picker=True)
     if prism is None:
-        print("[BotwCraft] Prism Launcher not found. Start your Minecraft 26.3 "
-              "Fabric instance with -Dbotwcraft.experimentalBlocks=true", flush=True)
-        return None
+        raise RuntimeError("Prism Launcher introuvable : sélectionne prismlauncher.exe "
+                           "dans la fenêtre de recherche")
+    data_dir = prism_data_dir(prism)
+    expected_instance = data_dir / "instances" / "BotwCraftPreview"
+    if not expected_instance.is_dir():
+        raise RuntimeError(
+            "L'instance Minecraft BotwCraftPreview n'existe pas dans "
+            f"{data_dir}. Relance INSTALL_AND_PREVIEW.bat.")
     env = os.environ.copy()
     opts = env.get("JAVA_TOOL_OPTIONS", "")
     opts += " -Dbotwcraft.experimentalBlocks=true -Dskycraft.startHidden=true"
     env["JAVA_TOOL_OPTIONS"] = opts.strip()
     print(f"[BotwCraft] Launching Minecraft through {prism}", flush=True)
-    return subprocess.Popen([str(prism), "--launch", "BotwCraftPreview"], env=env)
+    return subprocess.Popen(
+        [str(prism), "--dir", str(data_dir), "--launch", "BotwCraftPreview"],
+        env=env, cwd=prism.parent)
 
 def build_commands(preview_blocks=False):
     scripts = [
