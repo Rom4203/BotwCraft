@@ -36,7 +36,7 @@ jobs:
         run: python botw/guard_switch_player_hook.py
       - name: Compile native guest against actual WiiXLaunch SDK
         run: |
-          c++ -std=c++20 -O2 -Wall -Wextra \
+          c++ -std=c++20 -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer -Wall -Wextra \
             -I WiiXLaunch/include \
             -I WiiXLaunch/sdk/include \
             botw/guest_mod/mod.cpp botw/guest_mod/test_native.cpp \
