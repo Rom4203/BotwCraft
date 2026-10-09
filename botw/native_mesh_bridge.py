@@ -43,6 +43,12 @@ NATIVE_VERTEX = struct.Struct("<8f")       # 32 bytes
 DEFAULT_RELATIVE_PATH = Path(
     "WiiXLaunch/mods/01007EF00011E000/botwcraft/frame.bin"
 )
+# Title-specific mod ROMFS used by WiiXLaunch's own guest loader.
+# Ryujinx may snapshot this at launch; host writes are experimental.
+ROMFS_RELATIVE_PATH = Path(
+    "mods/contents/01007ef00011e000/BotwCraft/"
+    "romfs/WiiXLaunch/mods/botwcraft/frame.bin"
+)
 
 def fnv1a(data: bytes) -> int:
     result = 2166136261
@@ -278,6 +284,17 @@ def resolve_sd_root(override=None):
         raise FileNotFoundError(f"Ryujinx SD card not found: {folder}. Use --sd-root.")
     return folder
 
+def resolve_romfs_output(sd_root):
+    """Only use the ROMFS destination if our installer already seeded it.
+
+    Do not create unrequested mod directories or overwrite third-party mods.
+    This path is an EXPERIMENTAL channel: many Ryujinx versions construct a
+    ROMFS snapshot at game startup so replacing a file later is not live.
+    """
+    path = Path(sd_root).parent / ROMFS_RELATIVE_PATH
+    return path if path.is_file() else None
+
+
 def run(sd_root, hz=8):
     if sys.platform != "win32":
         raise RuntimeError("Windows host required")
@@ -287,7 +304,17 @@ def run(sd_root, hz=8):
     last_mesh = -1
     frame = 1
     writer = RecoverableMeshWriter(destination)
-    print("[BotwCraft] Native NVN mesh bridge:", destination, flush=True)
+    romfs = resolve_romfs_output(root)
+    romfs_writer = RecoverableMeshWriter(romfs) if romfs is not None else None
+    print("[BotwCraft] Native NVN mesh bridge (SD):", destination, flush=True)
+    if romfs_writer is None:
+        print("[BotwCraft] ROMFS probe file not installed. "
+              "Re-run INSTALL_NATIVE_TEST.bat with Ryujinx closed.", flush=True)
+    else:
+        print("[BotwCraft] ROMFS experimental mesh output:", romfs, flush=True)
+        print("[BotwCraft] WARNING: Ryujinx may snapshot ROMFS at game boot. "
+              "Writing this file does not establish live Switch mesh delivery.",
+              flush=True)
     print("[BotwCraft] This reads actual MC world meshes; "
           "BOTW 1.5 Link/camera sync still requires game reverse engineering.",
           flush=True)
@@ -315,6 +342,8 @@ def run(sd_root, hz=8):
                 content = encode_mesh(frame, vertex_list)
                 # Send new frames even when empty so native game clears stale blocks.
                 writer.write(content)
+                if romfs_writer is not None:
+                    romfs_writer.write(content)
                 if (frame % (hz * 10)) == 1 and frame > 1:
                     print(f"[BotwCraft] Native mesh: {len(vertex_list)//3} triangles, "
                           f"{len(sections)} Minecraft sections", flush=True)
@@ -325,7 +354,10 @@ def run(sd_root, hz=8):
     finally:
         # Explicitly clear triangles; previous renderer frames can't survive.
         try:
-            writer.write(encode_mesh((frame + 1) & 0xffffffff, []))
+            last_empty = encode_mesh((frame + 1) & 0xffffffff, [])
+            writer.write(last_empty)
+            if romfs_writer is not None:
+                romfs_writer.write(last_empty)
         finally:
             memory.close()
 
