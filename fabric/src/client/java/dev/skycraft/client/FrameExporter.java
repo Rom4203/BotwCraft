@@ -20,8 +20,12 @@ import net.minecraft.client.Minecraft;
  */
 public final class FrameExporter {
 	private static final int STAGING = 2;
-    private static final long BOTW_MIN_CAPTURE_NANOS = 33_000_000L;
-    private static long lastCaptureNanos;
+    // Limit GPU readback frequency without slowing keyboard/mouse polling.
+    // Old V8 copied 4–8 MiB at up to 260 FPS, enough to saturate GPU PCIe
+    // transfers and stall the Minecraft render thread.
+    private static final long READBACK_INTERVAL_NANOS = 33_000_000L;
+    private static long lastReadbackRequestNanos;
+    private static long lastReadbackShipNanos;
 	private static final int FREE = 0;
 	private static final int PENDING = 1;
 	private static final int READY = 2;
@@ -42,13 +46,15 @@ public final class FrameExporter {
 	}
 
 	public static void capture(Minecraft minecraft) {
-		shipReadyFrames();
-        // GPU->CPU readback takes milliseconds and copies 4–8MB of pixels.
-        // Send the hand/HUD at 30Hz, not at every uncapped render frame.
-        // Minecraft input and physics still run independently at full speed.
         long now = System.nanoTime();
-        if (now - lastCaptureNanos < BOTW_MIN_CAPTURE_NANOS) return;
-        lastCaptureNanos = now;
+        // Poll a finished asynchronous buffer no more than ~30 times/s.
+        // Input is processed in SkyClient.beginFrame() independently.
+        if (now - lastReadbackShipNanos >= READBACK_INTERVAL_NANOS) {
+            shipReadyFrames();
+            lastReadbackShipNanos = now;
+        }
+        if (now - lastReadbackRequestNanos < READBACK_INTERVAL_NANOS) return;
+        lastReadbackRequestNanos = now;
 
 		RenderTarget target = minecraft.gameRenderer.mainRenderTarget();
 		GpuTexture color = target.getColorTexture();
