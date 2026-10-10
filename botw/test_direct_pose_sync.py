@@ -36,10 +36,15 @@ class DirectPoseTests(unittest.TestCase):
     def test_menu_disconnect_and_teleport_disarm(self):
         a=bdp.Align()
         self.assertIsNotNone(a.target(mc(),(-1000,200,500)))
-        self.assertIsNone(a.target(mc(2,flags=1),(-1000,200,500)))
-        self.assertIsNone(a.mc_origin)
-        a.target(mc(3),(-1000,200,500))
+        self.assertIsNone(a.target(mc(2,flags=1|bdp.INPUTS),(-1000,200,500)))
+        self.assertEqual(a.mc_origin,(10.,80.,20.))
+        # The actor may have drifted while a menu was open; same MC origin
+        # must still map to the same Hyrule origin.
+        self.assertEqual(a.target(mc(3),(-1001,199,498)).position,(-1000.,200.,500.))
         self.assertIsNone(a.target(mc(4,(1000,80,20)),(-1000,200,500)))
+        self.assertIsNone(a.mc_origin)
+        a.target(mc(5),(-1000,200,500))
+        self.assertIsNone(a.target(mc(6,flags=1),(-1000,200,500)))
         self.assertIsNone(a.mc_origin)
 
     def test_minecraft_and_link_seqlock_and_real_heartbeat(self):
@@ -50,12 +55,14 @@ class DirectPoseTests(unittest.TestCase):
         struct.pack_into("<ddd",memory,host.OFF_SKY_STATE+0x10,-1126,237,1910)
         self.assertEqual(bdp.get_botw(memory,1300),(-1126.,237.,1910.))
         self.assertIsNone(bdp.get_botw(memory,2200))
+        struct.pack_into("<Q",memory,0x18,1200)
         struct.pack_into("<II",memory,host.OFF_MC_STATE,2,FLAGS)
         struct.pack_into("<ddd",memory,host.OFF_MC_STATE+8,10,80,20)
         struct.pack_into("<ff",memory,host.OFF_MC_STATE+0x20,90,-20)
         struct.pack_into("<f",memory,host.OFF_MC_STATE+0x28,1.62)
         struct.pack_into("<Q",memory,host.OFF_MC_STATE+0x38,9)
-        self.assertTrue(bdp.ready(bdp.get_minecraft(memory)))
+        self.assertTrue(bdp.ready(bdp.get_minecraft(memory,1300)))
+        self.assertIsNone(bdp.get_minecraft(memory,2400))
         struct.pack_into("<I",memory,host.OFF_MC_STATE,3)
         self.assertIsNone(bdp.get_minecraft(memory))
 
