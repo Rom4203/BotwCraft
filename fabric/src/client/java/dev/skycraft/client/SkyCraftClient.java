@@ -11,7 +11,8 @@ public final class SkyCraftClient implements ClientModInitializer {
 	public void onInitializeClient() {
 		// Manual BotwCraft: opening Minecraft must not auto-connect or advertise a linked process.
 		DiscordPresence.start();
-		DestructionToggle.register();
+		// BOTW terrain destruction is deferred; do not display a misleading
+		// legacy 'Skyrim destruction' toggle in Minecraft's pause menu.
 		// The user explicitly controls BotwCraft; no launcher, Java flags or
 		// automatic world loading before a real game telemetry stream exists.
 		net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback.EVENT.register((dispatcher, context) -> {
