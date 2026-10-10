@@ -64,18 +64,22 @@ struct alignas(16) Mailbox {
     volatile uint32_t player_tick;
     volatile uint32_t player_valid;
     volatile float player_xyz[3];
+    volatile uint32_t camera_matrix_frames;
+    volatile uint32_t link_render_hidden;
 };
 static_assert(offsetof(Mailbox, packet) == 40);
 static_assert(offsetof(Mailbox, acknowledged_seq) == 152);
 static_assert(offsetof(Mailbox, player_tick) == 176, "Live Link telemetry ABI drift");
 static_assert(offsetof(Mailbox, player_valid) == 180, "Live Link validity ABI drift");
 static_assert(offsetof(Mailbox, player_xyz) == 184, "Live Link position ABI drift");
+static_assert(offsetof(Mailbox, camera_matrix_frames) == 196, "FPS camera matrix status drift");
+static_assert(offsetof(Mailbox, link_render_hidden) == 200, "Link visibility status drift");
 
 extern "C" {
 // Marker must remain in the actual guest .data of this wxlm module.
 // Never conflate it with the unrelated BDP1 symbol in subsdk9.
 __attribute__((used, aligned(16))) Mailbox g_BotwCraftLiveMailbox = {
-    "BOTWCRAFT_WXLM_BDP1_LIVE_20261010", {}, 0, kModuleReady, 0, 0, 0, 0, 0, {0,0,0}
+    "BOTWCRAFT_WXLM_BDP1_LIVE_20261010", {}, 0, kModuleReady, 0, 0, 0, 0, 0, {0,0,0}, 0, 0
 };
 }
 
@@ -162,6 +166,7 @@ static bool updateVisualModel(uint32_t handle, bool hide) {
     if (!model || (model&7u) || model<0x10000) return false;
     volatile float* scale=reinterpret_cast<volatile float*>(model+0x88);
     if (!hide) {
+        g_BotwCraftLiveMailbox.link_render_hidden=0;
         if (s_modelWasHidden && s_hiddenModel==model &&
             s_hiddenActor==actor) {
             for (unsigned i=0;i<3;i++) scale[i]=s_previousScale[i];
@@ -183,6 +188,7 @@ static bool updateVisualModel(uint32_t handle, bool hide) {
     }
     // Nonzero scale avoids singular render matrices while making Link invisible.
     for (unsigned i=0;i<3;i++) scale[i]=0.0001f;
+    g_BotwCraftLiveMailbox.link_render_hidden=1;
     if (!s_loggedModelHide) {
         s_loggedModelHide=true;
         S::Log("[BOTW_NATIVE] Link model scale suppressed (actor retained)");
@@ -280,7 +286,8 @@ extern "C" __attribute__((used)) void BotwCraftFirstPersonMatrix(
      void* camera,void* outputMatrix) {
     if (camera && reinterpret_cast<uintptr_t>(camera)==s_liveCamera &&
         s_lastFpsTick && s_ticks-s_lastFpsTick<=3u){
-        setCameraLookAt(s_liveCamera,s_lastEye,s_lastForward);
+        if(setCameraLookAt(s_liveCamera,s_lastEye,s_lastForward))
+            ++g_BotwCraftLiveMailbox.camera_matrix_frames;
     }
     if (s_cameraMatrixOriginal)
         s_cameraMatrixOriginal(camera,outputMatrix);
