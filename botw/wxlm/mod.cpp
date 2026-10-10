@@ -97,6 +97,17 @@ __attribute__((used, aligned(16))) Mailbox g_BotwCraftLiveMailbox = {
 };
 }
 
+// Ghost-actor latch: once Minecraft owns the session, Link never returns to
+// a visible/falling actor on a low-FPS host stall. A new game or respawn gets
+// a new handle and will be captured on the next valid MC pose.
+static bool s_ghostMode = false;
+static bool s_poseSaved = false;
+static Pose s_heldPose{};
+static uint32_t s_ghostHandle = 0;
+static uintptr_t s_physBodyA = 0;
+static uintptr_t s_physBodyB = 0;
+static bool s_loggedGhostPhysics = false;
+static bool s_loggedHostStall = false;
 static uint32_t s_ticks = 0;
 static uint32_t s_lastSeq = 0;
 static uint32_t s_lastActiveTick = 0;
@@ -520,6 +531,55 @@ static void printGuestMailboxAddress() {
     S::Log(line);
 }
 
+// Verified symbols from zeldaret/botw's NX150 uking_functions.csv:
+// ksys::phys::RigidBody::setContactNone()      main+0x00f8f0c0
+// ksys::phys::RigidBody::setGravityFactor(float) main+0x00f939f0
+// ksys::phys::RigidBody::setLinearVelocity(Vec3&,float) main+0x00f8ec3c
+// Actual Actor::mMainBody and mTgtBody fields are at +0x190 / +0x198.
+// Do not delete Actor: Nintendo's player manager and scene streaming use it.
+static bool disableBodyMotion(uintptr_t body){
+    if(!body || (body&7u) || body<0x10000u || !S::ResolveTarget)return false;
+    using ContactNone=void(*)(void*);
+    using SetGravity=void(*)(void*,float);
+    using SetVelocity=bool(*)(void*,const float*,float);
+    static ContactNone noContact=nullptr;
+    static SetGravity noGravity=nullptr;
+    static SetVelocity noVelocity=nullptr;
+    static bool resolved=false;
+    if(!resolved){
+        resolved=true;
+        noContact=reinterpret_cast<ContactNone>(S::ResolveTarget(0x00f8f0c0u,0));
+        noGravity=reinterpret_cast<SetGravity>(S::ResolveTarget(0x00f939f0u,0));
+        noVelocity=reinterpret_cast<SetVelocity>(S::ResolveTarget(0x00f8ec3cu,0));
+    }
+    if(!noContact || !noGravity || !noVelocity)return false;
+    noContact(reinterpret_cast<void*>(body));
+    noGravity(reinterpret_cast<void*>(body),0.f);
+    const float zero[3]={0.f,0.f,0.f};
+    noVelocity(reinterpret_cast<void*>(body),zero,0.000001f);
+    return true;
+}
+static void freezeLinkPhysics(uint32_t handle) {
+    if(!S::ActorUnsafeRawPointer)return;
+    const uintptr_t actor=S::ActorUnsafeRawPointer(handle);
+    if(actor<0x10000u || (actor&7u))return;
+    // Clear Actor's own velocity integrators every player frame.
+    // This prevents Link's falling animation/sound from ramping vertical
+    // velocity while Minecraft has stopped drawing frames.
+    volatile float* linear=reinterpret_cast<volatile float*>(actor+0x400u);
+    volatile float* angular=reinterpret_cast<volatile float*>(actor+0x40cu);
+    for(unsigned i=0;i<3;i++){linear[i]=0.f;angular[i]=0.f;}
+    // Apply to player primary and targeting rigid bodies. NPC collisions,
+    // weapon hits and falling gravity now ignore this proxy actor.
+    const uintptr_t a=*reinterpret_cast<const volatile uintptr_t*>(actor+0x190u);
+    const uintptr_t b=*reinterpret_cast<const volatile uintptr_t*>(actor+0x198u);
+    const bool first=disableBodyMotion(a);
+    const bool second=(b!=a) ? disableBodyMotion(b) : first;
+    if((first||second) && !s_loggedGhostPhysics){
+        s_loggedGhostPhysics=true;
+        S::Log("[BOTW_NATIVE] LINK_HAVOK_CONTACT_NONE_GRAVITY_ZERO_VELOCITY_ZERO");
+    }
+}
 extern "C" __attribute__((used)) void BotwCraftPlayerTick() {
     ++s_ticks;
     if (s_ticks==1u) S::Log("[BOTW_NATIVE] PLAYER_FRAME_TICK_RUNNING");
@@ -551,77 +611,74 @@ extern "C" __attribute__((used)) void BotwCraftPlayerTick() {
         S::Log("[BOTW_NATIVE] Link actor resolved by player tick");
     }
 
-    Pose p{};
-    if (!readPacket(p) || p.magic != kMagic || p.version != 1) return;
-    // Acknowledge even an unarmed probe so the Windows bridge can prove
-    // WHICH of several identically marked guest-memory host mappings is live.
-    g_BotwCraftLiveMailbox.acknowledged_seq = p.seq;
-    if ((p.flags & 3u) != 3u || !actorReady) {
-        if (actorReady) updateVisualModel(actor,false);
+    if (!actorReady) {
+        s_ghostMode=false;
+        s_poseSaved=false;
+        s_ghostHandle=0;
         return;
     }
-    if (p.seq != s_lastSeq) {
-        s_lastSeq = p.seq;
-        s_lastActiveTick = s_ticks;
-        s_loggedTimeout = false;
-        if (!s_loggedPose) {
-            s_loggedPose = true;
-            S::Log("[BOTW_NATIVE] Fresh Minecraft BDP1 packets acknowledged");
+    if(s_ghostMode && s_ghostHandle!=actor) {
+        // A new actor handle is a respawn / new game; avoid freezing it at
+        // coordinates from the previous scene. Next MC packet re-arms.
+        s_ghostMode=false;
+        s_poseSaved=false;
+        s_ghostHandle=0;
+        s_loggedGhostPhysics=false;
+    }
+    Pose incoming{};
+    const bool packetValid=readPacket(incoming) &&
+         incoming.magic==kMagic && incoming.version==1;
+    if(packetValid){
+        g_BotwCraftLiveMailbox.acknowledged_seq=incoming.seq;
+    }
+    // Only explicit Minecraft-authoritative input activates the ghost.
+    // A later inactivity/disarm packet never makes the invisible actor
+    // visible again; it simply holds the last good Minecraft pose.
+    const bool armed=packetValid && (incoming.flags&0x13u)==0x13u;
+    if(armed){
+        s_ghostMode=true;
+        s_ghostHandle=actor;
+        if(!s_poseSaved || incoming.seq!=s_lastSeq){
+            s_heldPose=incoming;
+            s_poseSaved=true;
+            s_lastSeq=incoming.seq;
+            s_lastActiveTick=s_ticks;
+            s_loggedHostStall=false;
+            if(!s_loggedPose){
+                s_loggedPose=true;
+                S::Log("[BOTW_NATIVE] Minecraft coordinates received; persistent ghost enabled");
+            }
         }
     }
-    if (s_ticks - s_lastActiveTick > 120) {
-        if (!s_loggedTimeout) {
-            s_loggedTimeout = true;
-            S::Log("[BOTW_NATIVE] Minecraft pose stale: game control disarmed");
-        }
-        updateVisualModel(actor,false);
-        return;
-    }
-    // Apply every tick while a fresh Minecraft packet exists, even if
-    // the sequence has not changed: BOTW physics may republish transform.
-    // The explicit 0x10 opt-in distinguishes active actuator from probing.
-    if (!(p.flags & 0x10u)) {
-        updateVisualModel(actor,false);
-        g_BotwCraftLiveMailbox.runtime_state = kEngineUnavailable;
-        return;
-    }
-    // Zelda must not simultaneously act on its ProController/analog stick:
-    // Minecraft is authoritative. Capture is automatically released in two
-    // frames if BotwCraft stops updating, so menus stay usable on disconnect.
-    if (!s_inputInit && Inputs::Init) {
-        s_inputInit=Inputs::Init()!=0;
-    }
-    if(s_inputInit && Inputs::HoldInputCapture){
-        Inputs::HoldInputCapture(2u);
-        if(!s_loggedInputCapture && Inputs::IsInputCaptured && Inputs::IsInputCaptured()){
-            s_loggedInputCapture=true;
-            S::Log("[BOTW_NATIVE] ZELDA_CONTROLLER_INPUT_CAPTURED");
-        }
-    }
+    if(!s_ghostMode || !s_poseSaved)return;
+
+    // This callback runs in Zelda independently of Minecraft's FPS.
+    // Keep Link without body, collisions, gravity, rendering and velocity,
+    // even while Minecraft is frozen or the Rust bridge stops transmitting.
     s_activeActorHandle=actor;
-    const bool warped = warpLink(actor,p);
-    const bool camera = updateCameraFromGame(p);
-    // Link's renderer is not needed for first-person BotwCraft. Do NOT
-    // couple visibility to camera-matrix hook timing: that hook may run after
-    // the player tick or report a one-frame delay, leaving Link on screen.
-    // This does not delete the actor; visuals are restored on disconnect.
-    const bool mesh_hidden=updateVisualModel(actor,true);
-    if (!mesh_hidden && !s_loggedHideFailure) {
-        s_loggedHideFailure=true;
-        S::Log("[BOTW_NATIVE] LINK_RENDER_HIDE_FAILED: model binding unavailable");
+    freezeLinkPhysics(actor);
+    updateVisualModel(actor,true);
+    if (!s_inputInit && Inputs::Init) s_inputInit=Inputs::Init()!=0;
+    if (s_inputInit && Inputs::HoldInputCapture) Inputs::HoldInputCapture(2u);
+
+    if(s_ticks-s_lastActiveTick>120u && !s_loggedHostStall) {
+        s_loggedHostStall=true;
+        S::Log("[BOTW_NATIVE] MINECRAFT_STALL: GHOST_PERSISTENT_LAST_POSE_HELD");
+    }
+    // Re-apply last trustworthy MC pose every native player frame so native
+    // animation or solver never resumes falling between low-FPS host updates.
+    const bool warped=warpLink(actor,s_heldPose);
+    const bool camera=updateCameraFromGame(s_heldPose);
+    if (!warped && !s_loggedWarp) {
+        s_loggedWarp=true;
+        S::Log("[BOTW_NATIVE] WARNING: ghost pose warp not acknowledged");
     }
     g_BotwCraftLiveMailbox.runtime_state =
         warped && camera ? kWarpAndCameraOK : warped ? kWarpOK :
         camera ? kCameraOK : kEngineUnavailable;
-    if (warped || camera) g_BotwCraftLiveMailbox.applied_sequence=p.seq;
-    if (warped && !s_loggedWarp) {
-        S::Log("[BOTW_NATIVE] Link actor transform applied");
-        s_loggedWarp=true;
-    }
-    if (camera && !s_loggedCamera) {
-        S::Log("[BOTW_NATIVE] In-game LookAtCamera first person applied");
-        s_loggedCamera=true;
-    }
+    if (warped || camera)
+        g_BotwCraftLiveMailbox.applied_sequence=s_heldPose.seq;
+
 }
 
 // Player callbacks execute after the engine has a real Link actor; unlike
