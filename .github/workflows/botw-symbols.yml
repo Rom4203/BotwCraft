@@ -1,4 +1,4 @@
-name: Resolve BOTW camera symbols
+name: Resolve BOTW player-audio symbols
 on:
   push:
     branches: [botw-native-creative-flight]
@@ -9,13 +9,13 @@ jobs:
   symbols:
     runs-on: ubuntu-latest
     steps:
-      - name: Examine BOTW NX150 named camera functions
+      - name: Find safe actor-local sound SLink controls on BOTW Switch 1.5.0
         shell: python
         run: |
           import urllib.request, re
           url="https://raw.githubusercontent.com/zeldaret/botw/master/data/uking_functions.csv"
           s=urllib.request.urlopen(url,timeout=30).read().decode('utf-8')
           lines=[line for line in s.splitlines() if
-                 re.search(r'setContactNone|setContactMask|setGravityFactor|setLinearVelocity|CharacterController::|PlayerInfo::|LookAtCamera::doUpdateMatrix',line,re.I)]
-          print("BOTW_RENDER_PHYSICS_SYMBOL_MATCHES",len(lines))
-          for line in lines[:250]: print(line[:450])
+                 re.search(r'xlink::XLink|xlink2::UserInstanceSLink|xlink2::UserInstance::(killAll|sleep|setIsActive)|xlink2::User::killAll|SLink::|SLink|stopAllEvent|SoundMgr::',line,re.I)]
+          print("BOTW_AUDIO_SYMBOL_MATCHES",len(lines))
+          for line in lines[:220]: print(line[:450])
