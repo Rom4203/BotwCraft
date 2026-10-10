@@ -24,8 +24,11 @@ class PackageTests(unittest.TestCase):
             "botw/hud_snapshot.py",
             "botw/native_hud_bridge.py",
             "botw/launcher.py",
+            "botw/direct_pose_sync.py",
+            "botw/ryujinx_direct_memory.py",
             "botw/prism_discovery.py",
             "packaging/START_BRIDGE.bat",
+            "packaging/START_DIRECT_LINK.bat",
             "packaging/START_HUD_BRIDGE.bat",
             "packaging/START_NATIVE_HUD.bat",
             "packaging/CHECK_HUD.bat",
@@ -57,11 +60,14 @@ class PackageTests(unittest.TestCase):
             with zipfile.ZipFile(out) as archive:
                 files = archive.namelist()
                 self.assertEqual(archive.testzip(), None)
-                self.assertEqual(len(files), 34)
+                self.assertEqual(len(files), 37)
                 self.assertTrue(any(p.endswith("/exefs/subsdk9") for p in files))
                 self.assertIn("ryujinx_sdcard/WiiXLaunch/mods/01007EF00011E000/botwcraft.wxlm", files)
                 self.assertIn("minecraft_mods/skycraft-0.1.2.jar", files)
                 self.assertIn("START_BRIDGE.bat", files)
+                self.assertIn("START_DIRECT_LINK.bat", files)
+                self.assertIn("bridge/direct_pose_sync.py", files)
+                self.assertIn("bridge/ryujinx_direct_memory.py", files)
                 self.assertIn("START_HUD_BRIDGE.bat", files)
                 self.assertIn("START_NATIVE_HUD.bat", files)
                 self.assertIn("bridge/native_hud_bridge.py", files)
