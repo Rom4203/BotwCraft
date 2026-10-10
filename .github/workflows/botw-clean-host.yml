@@ -11,6 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     container: devkitpro/devkita64:latest
     steps:
+      - uses: actions/checkout@v4
       - name: Fetch upstream WiiXLaunch and BOTW game module
         run: |
           git clone --depth=1 --recurse-submodules https://github.com/BladesawStudios/WiiXLaunch.git wiix
