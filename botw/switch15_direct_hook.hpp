@@ -17,6 +17,8 @@
 #include <cstddef>
 #include <wiixlaunch/game_version.hpp>
 #include <wiixlaunch/debug_log.hpp>
+#include <wiixlaunch/hook.hpp>
+#include <wiixlaunch/botw/game/camera.hpp>
 #include <lib.hpp>
 
 namespace BotwCraft15Direct {
@@ -25,6 +27,10 @@ constexpr uint32_t kMagic = 0x31504442;
 constexpr uint32_t kActive = 1;
 constexpr uint32_t kFirstPerson = 2;
 constexpr uint32_t kAllowActorWrite = 0x10;
+constexpr uintptr_t kPlayerSetMtxOffset = 0x84d498; // PlayerBase::setMtx, BOTW 1.5.0
+constexpr uintptr_t kCameraGetterOffset = 0x131e194; // cam::getLookAtCamera
+constexpr uintptr_t kCameraDoUpdateMatrixOffset = 0xb1be7c; // LookAtCamera::doUpdateMatrix
+
 // Marker EXACTLY 40 bytes, installed once in the guest's real writable memory.
 // The scanner only accepts this marker in the genuine Ryujinx process.
 constexpr char kMarker[40] = "BOTWCRAFT15_DIRECT_GUEST_XYZ_20261010";
@@ -89,6 +95,8 @@ inline void Register() {
     WIIXL_LOG("BotwCraft:DIRECT_GUEST_MAILBOX_ADDR=0x%lx bytes=152",
              static_cast<unsigned long>(reinterpret_cast<uintptr_t>(&gMailbox)));
     WIIXL_LOG("BotwCraft:DIRECT_LINK_BACKEND_ARMED=0 (requires explicit BDP1 opt-in)");
+    FirstPersonCameraHook::Install(kCameraDoUpdateMatrixOffset,0);
+    WIIXL_LOG("BotwCraft:DIRECT_FIRST_PERSON_CAMERA_HOOK_INSTALLED_15");
 }
 
 // Returns false for an unverified vtable, and does not mutate any coordinates.
@@ -99,31 +107,81 @@ inline bool TryApplyActor(void* actor, const float xyz[3], float yawDeg,
     uintptr_t ptr = reinterpret_cast<uintptr_t>(actor);
     if (ptr < 0x10000000 || ptr > 0x0000010000000000ull ||
         (ptr & 7u)) return false;
-    auto** vtable = *reinterpret_cast<uintptr_t***>(actor);
-    uintptr_t vtp = reinterpret_cast<uintptr_t>(vtable);
-    if (vtp < 0x10000000 || vtp > 0x0000010000000000ull ||
-        (vtp & 7u)) return false;
-    // No call whatsoever unless the candidate entry is in game's TEXT.
-    constexpr size_t kSetMtxVirtualIndex = 85;
-    uintptr_t targetFunction = reinterpret_cast<uintptr_t>(
-        vtable[kSetMtxVirtualIndex]);
+    const uintptr_t main = exl::util::GetMainModuleInfo().m_Total.m_Start;
+    const uintptr_t targetFunction=main+kPlayerSetMtxOffset;
     if (targetFunction < textStart || targetFunction >= textEnd ||
         (targetFunction & 3u)) return false;
 
-    // Keep Link's existing rotation until the BOTW 1.5.0 PlayerBase yaw
-    // convention is confirmed. SetMtx updates the actor, character controller,
-    // and render model; refresh=false prevents cloth reset each frame.
-    // The identity matrix is placeholder for rotation ONLY; see camera hook.
+    // Switch BOTW 1.5.0's PlayerBase::setMtx override. This changes
+    // actor/model/character-controller together instead of mirrored XYZ.
+    // Identity basis is temporary until Link yaw/model hiding is settled;
+    // the actual first-person view is separately controlled below.
     const float matrix[12]{
         1.f,0.f,0.f,xyz[0],
         0.f,1.f,0.f,xyz[1],
         0.f,0.f,1.f,xyz[2]
     };
     (void)yawDeg;
-    using SetMtx = void (*)(void*, const float*, int, int);
+    using SetMtx = void (*)(void*,const float*,int,int);
     reinterpret_cast<SetMtx>(targetFunction)(actor,matrix,1,0);
     return true;
 }
+
+// Zelda's OWN LookAtCamera matrix is generated from its pos/at/up here.
+// Hook the ORIGINAL game's actual 1.5.0 function so the view matrix uses
+// Minecraft eye/yaw/pitch, rather than shifting the Vulkan image afterward.
+WIIXL_HOOK_DEFINE_TRAMPOLINE(FirstPersonCameraHook) {
+    static void Callback(void* camera, void* matrix) {
+        if (WiiXLaunch::GameVersion::Fingerprint() == kFingerprint &&
+            gRenderFramesSinceUpdate <= 12 && camera && matrix) {
+            Target target{};
+            if (Read(target)) {
+                const uintptr_t main =
+                    exl::util::GetMainModuleInfo().m_Total.m_Start;
+                using GetActiveCamera = void* (*)();
+                const auto getActive =
+                    reinterpret_cast<GetActiveCamera>(main+kCameraGetterOffset);
+                // Compare with Zelda's actual active camera: never modify
+                // cutscene/editor/offscreen LookAtCamera objects accidentally.
+                void* activeCamera = getActive();
+                if (activeCamera == camera) {
+                    const uintptr_t ptr=reinterpret_cast<uintptr_t>(camera);
+                    if (ptr >= 0x10000000 &&
+                        ptr < 0x0000010000000000ull && !(ptr & 7u)) {
+                        float px,py,pz,ax,ay,az,ux,uy,uz;
+                        WiiXLaunch::BotW::Camera::GetPosition(
+                            camera,px,py,pz);
+                        WiiXLaunch::BotW::Camera::GetLookAt(
+                            camera,ax,ay,az);
+                        WiiXLaunch::BotW::Camera::GetUp(
+                            camera,ux,uy,uz);
+                        const float oldUpLength=ux*ux+uy*uy+uz*uz;
+                        const float ddx=px-target.position[0];
+                        const float ddy=py-target.position[1];
+                        const float ddz=pz-target.position[2];
+                        // Ignore loading screens, cutscenes or invalid
+                        // camera objects far away from the real player.
+                        if (Finite(px)&&Finite(py)&&Finite(pz) &&
+                            Finite(ax)&&Finite(ay)&&Finite(az) &&
+                            oldUpLength>0.25f && oldUpLength<4.f &&
+                            ddx*ddx+ddy*ddy+ddz*ddz<40000.f) {
+                            const float* eye=target.eye;
+                            const float* f=target.forward;
+                            WiiXLaunch::BotW::Camera::SetPosition(
+                                camera,eye[0],eye[1],eye[2]);
+                            WiiXLaunch::BotW::Camera::SetLookAt(
+                                camera,eye[0]+f[0]*10.f,
+                                eye[1]+f[1]*10.f,eye[2]+f[2]*10.f);
+                            WiiXLaunch::BotW::Camera::SetUp(
+                                camera,0.f,1.f,0.f);
+                        }
+                    }
+                }
+            }
+        }
+        Orig(camera,matrix);
+    }
+};
 
 inline void Poll(void* player, const float current[3]) {
     if (WiiXLaunch::GameVersion::Fingerprint() != kFingerprint ||
