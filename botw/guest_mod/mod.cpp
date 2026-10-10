@@ -278,7 +278,7 @@ extern "C" __attribute__((used)) void WiiXLaunch_ModEntry() {
                          "BotwCraft:NATIVE_HUD_BUFFER_ADDR=0x",
                          reinterpret_cast<uintptr_t>(gHudPacket));
             Log(addressMessage);
-            Log("BotwCraft:NATIVE_HUD_CAPACITY=36900");
+            Log("BotwCraft:NATIVE_HUD_CAPACITY=36896");
         } else {
             Log("BotwCraft:NATIVE_HUD_BUFFER_ALLOC_FAILED; normal probe preserved");
         }
