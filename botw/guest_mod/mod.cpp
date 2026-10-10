@@ -8,6 +8,7 @@
 #include <cstdint>
 #include "../native_guest_mesh.hpp"
 #include "../native_world_scene.hpp"
+#include "../native_hud_packet.hpp"
 #include <wiixlaunch/imports/wiixl_core.h>
 #include <wiixlaunch/imports/botw_player.h>
 #include <wiixlaunch/imports/botw_input.h>
@@ -16,6 +17,7 @@
 
 namespace Core {
 WXL_USE_wiixl_core(Log);
+WXL_USE_wiixl_core(Alloc);
 }
 namespace Player {
 WXL_USE_botw_player(SupportsPosition);
@@ -30,11 +32,20 @@ namespace Graphics {
 WXL_USE_botw_gfx(IsGX2);
 WXL_USE_botw_gfx(RegisterDraw);
 WXL_USE_botw_gfx(DrawMesh);
+WXL_USE_botw_gfx(CreateTexture);
+WXL_USE_botw_gfx(DrawSprite);
 }
 
 namespace {
     uint32_t frame = 0; // Throttle authentic Link position log from PlayerTick.
     uint32_t drawCallbackCount = 0;
+    // Optional ONE-FRAME native texture proof. Actual GUI originates from
+    // Minecraft GPU capture, not a fabricated HUD. This uses native NVN
+    // CreateTexture/DrawSprite, not a Windows transparent overlay.
+    uint8_t* gHudPacket = nullptr;
+    uint32_t gHudTexture = 0;
+    bool gHudUploadAttempted = false;
+
     // Exposed ONLY for explicit local GDB debug writes. The host discovers
     // this guest pointer from our native log, never from hard-coded offsets.
     // GDB halts the guest while writing, so a full packet lands atomically
@@ -76,7 +87,31 @@ namespace {
 
     void OnGameDraw(uintptr_t cb, uintptr_t texture, int32_t w, int32_t h) {
         (void)w; (void)h;
-        if (cb == 0 || texture == 0 || !Graphics::DrawMesh) return;
+        if (cb == 0 || texture == 0) return;
+        // Render the first genuine Minecraft HUD image natively inside BOTW.
+        // WiiXLaunch gfx v1.1 currently creates immutable textures; this
+        // proof renders ONE received HUD frame until the next session.
+        if (gHudPacket && Graphics::CreateTexture && Graphics::DrawSprite) {
+            if (!gHudUploadAttempted &&
+                BotwCraftHud::Valid(gHudPacket, BotwCraftHud::kPacketBytes)) {
+                gHudUploadAttempted = true;
+                gHudTexture = Graphics::CreateTexture(
+                    gHudPacket + sizeof(BotwCraftHud::Header),
+                    static_cast<uint32_t>(BotwCraftHud::kPixels),
+                    static_cast<int32_t>(BotwCraftHud::kWidth),
+                    static_cast<int32_t>(BotwCraftHud::kHeight), 0);
+                if (Core::Log) Core::Log(gHudTexture
+                    ? "BotwCraft:NATIVE_HUD_TEXTURE_CREATED"
+                    : "BotwCraft:NATIVE_HUD_TEXTURE_FAILED");
+            }
+            if (gHudTexture) {
+                Graphics::DrawSprite(cb, texture, gHudTexture,
+                                     -1.0f, -1.0f, 2.0f, 2.0f,
+                                     1.0f, 1.0f, 1.0f, 1.0f);
+                return;
+            }
+        }
+        if (!Graphics::DrawMesh) return;
         const float* vertices = kTriangle;
         uint32_t count = 3;
 
@@ -231,6 +266,24 @@ extern "C" __attribute__((used)) void WiiXLaunch_ModEntry() {
     Log(addressMessage);
     Log("BotwCraft:BWC2_WORLD_BUFFER_CAPACITY=15416");
     Log("BotwCraft:BWC2_WAITING_FOR_ZELDA_CAMERA");
+    // Allocated from the module's OWN WiiXLaunch heap, rather than adding
+    // ~37 KB to already large static BWC1/BWC2 guest buffers.
+    if (Core::Alloc) {
+        gHudPacket = static_cast<uint8_t*>(Core::Alloc(
+            static_cast<uint32_t>(BotwCraftHud::kPacketBytes), 16));
+        if (gHudPacket) {
+            for (size_t i=0;i<BotwCraftHud::kPacketBytes;++i)
+                gHudPacket[i]=0;
+            LogTaggedHex(addressMessage,
+                         "BotwCraft:NATIVE_HUD_BUFFER_ADDR=0x",
+                         reinterpret_cast<uintptr_t>(gHudPacket));
+            Log(addressMessage);
+            Log("BotwCraft:NATIVE_HUD_CAPACITY=36900");
+        } else {
+            Log("BotwCraft:NATIVE_HUD_BUFFER_ALLOC_FAILED; normal probe preserved");
+        }
+    }
+
 
     if (Graphics::RegisterDraw && Graphics::DrawMesh) {
         if (Graphics::RegisterDraw(&OnGameDraw)) {
