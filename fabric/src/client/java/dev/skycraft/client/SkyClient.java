@@ -442,3 +442,45 @@ public final class SkyClient {
 		skyrimStalled = seqNow == lastPacedSeq;
 		lastPacedSeq = seqNow;
 	}
+
+	private static void applyLinkedOptions() {
+		Minecraft minecraft = Minecraft.getInstance();
+		var options = minecraft.options;
+		options.pauseOnLostFocus = false;
+		options.vignette().set(false);
+		options.enableVsync().set(false);
+		options.framerateLimit().set(BOTW_NATIVE ? 75 : 260);
+		// Minecraft doesn't draw the world itself; these only decide how far out placed blocks,
+		// arrows and Skyrim NPC stand-ins stay loaded and simulated.
+		options.renderDistance().set(BOTW_NATIVE ? 4 : 8);
+		options.simulationDistance().set(BOTW_NATIVE ? 4 : 8);
+		options.autoJump().set(false);
+		options.onboardAccessibility = false;
+		if (options.tutorialStep != net.minecraft.client.tutorial.TutorialSteps.NONE) {
+			minecraft.getTutorial().setStep(net.minecraft.client.tutorial.TutorialSteps.NONE);
+		}
+		options.getSoundSourceOptionInstance(net.minecraft.sounds.SoundSource.MUSIC).set(0.0);
+		options.save();
+	}
+
+	private static void hideWindowOnce(Minecraft minecraft) {
+		if (windowHidden || SHOW_WINDOW) {
+			return;
+		}
+		windowHidden = true;
+		SDLVideo.SDL_HideWindow(minecraft.getWindow().handle());
+		SkyCraft.LOG.info("SkyCraft: game window hidden (run with -Dskycraft.showWindow=true to keep it)");
+	}
+
+	private static void applyViewportSize(Minecraft minecraft) {
+		int w = Math.min(sky.viewportW, BOTW_NATIVE ? 1920 : Proto.MAX_OVERLAY_W);
+		int h = Math.min(sky.viewportH, BOTW_NATIVE ? 1080 : Proto.MAX_OVERLAY_H);
+		if (w <= 0 || h <= 0 || (w == appliedViewportW && h == appliedViewportH)) {
+			return;
+		}
+		appliedViewportW = w;
+		appliedViewportH = h;
+		minecraft.getWindow().setWindowed(w, h);
+		SkyCraft.LOG.info("SkyCraft: sizing overlay to Skyrim viewport {}x{}", w, h);
+	}
+}
