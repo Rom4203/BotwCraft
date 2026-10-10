@@ -7,6 +7,7 @@ Uses Win32 layered windows; no injection or changes to Ryujinx. Windows only.
 from __future__ import annotations
 
 import argparse
+import os
 import ctypes
 from ctypes import wintypes
 import struct
@@ -28,6 +29,49 @@ WS_EX_TOOLWINDOW = 0x00000080
 WS_EX_NOACTIVATE = 0x08000000
 DIB_RGB_COLORS = 0
 SRCCOPY = 0x00CC0020
+PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+GW_OWNER = 4
+# Win32 executable basenames; titles/HTML tabs containing "Ryujinx" do NOT count.
+RYUJINX_EXECUTABLES = frozenset(("ryujinx.exe", "ryujinx.ava.exe"))
+
+
+def is_ryujinx_executable(path):
+    """Fail closed: verify a running executable, NEVER a window title."""
+    if not isinstance(path, str) or not path:
+        return False
+    return path.replace("/", "\\").rsplit("\\", 1)[-1].casefold() in RYUJINX_EXECUTABLES
+
+
+def process_image_for_window(user32, kernel32, hwnd):
+    """Resolve the actual image owning an HWND using Win32 process APIs."""
+    pid = wintypes.DWORD(0)
+    if not user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid)) or not pid.value:
+        return None
+    handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid.value)
+    if not handle:
+        return None  # Never fall back to matching Opera/Chrome tab titles.
+    try:
+        chars = wintypes.DWORD(32768)
+        path = ctypes.create_unicode_buffer(chars.value)
+        if kernel32.QueryFullProcessImageNameW(handle, 0, path, ctypes.byref(chars)):
+            return path.value
+        return None
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def enable_per_monitor_dpi():
+    """Avoid logical/physical coordinate mismatch when moving Ryujinx screens."""
+    if sys.platform != "win32":
+        return False
+    try:
+        u = ctypes.WinDLL("user32", use_last_error=True)
+        u.SetProcessDpiAwarenessContext.argtypes = (ctypes.c_void_p,)
+        u.SetProcessDpiAwarenessContext.restype = wintypes.BOOL
+        return bool(u.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4)))
+    except (OSError, AttributeError):
+        return False
+
 
 class POINT(ctypes.Structure):
     _fields_ = [("x", wintypes.LONG), ("y", wintypes.LONG)]
@@ -147,6 +191,23 @@ class OverlayWindow:
         u.GetClientRect.argtypes = (hwnd, ctypes.POINTER(RECT))
         u.ClientToScreen.argtypes = (hwnd, ctypes.POINTER(POINT))
         u.IsWindowVisible.argtypes = (hwnd,)
+        u.IsIconic.argtypes = (hwnd,)
+        u.GetForegroundWindow.argtypes = ()
+        u.GetForegroundWindow.restype = hwnd
+        u.GetWindowThreadProcessId.argtypes = (hwnd, ctypes.POINTER(wintypes.DWORD))
+        u.GetWindowThreadProcessId.restype = wintypes.DWORD
+        u.GetWindow.argtypes = (hwnd, wintypes.UINT)
+        u.GetWindow.restype = hwnd
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        k32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+        k32.OpenProcess.restype = wintypes.HANDLE
+        k32.QueryFullProcessImageNameW.argtypes = (wintypes.HANDLE, wintypes.DWORD,
+                                                  wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD))
+        k32.QueryFullProcessImageNameW.restype = wintypes.BOOL
+        k32.CloseHandle.argtypes = (wintypes.HANDLE,)
+        k32.CloseHandle.restype = wintypes.BOOL
+        self.kernel = k32
+        self.last_target = None
         u.EnumWindows.argtypes = (ctypes.c_void_p, wintypes.LPARAM)
         u.UpdateLayeredWindow.argtypes = (hwnd, hwnd, ctypes.POINTER(POINT), ctypes.POINTER(SIZE),
             hwnd, ctypes.POINTER(POINT), wintypes.DWORD, ctypes.POINTER(BLENDFUNCTION), wintypes.DWORD)
@@ -178,14 +239,31 @@ class OverlayWindow:
         self.visible = False
 
     def find_game(self):
+        """Only track the real Ryujinx process, never an unrelated browser tab.
+
+        Hide HUD whenever Ryujinx isn't foreground: a WS_EX_TOPMOST overlay
+        must not draw on Opera/Discord while the user switches applications.
+        """
+        foreground = self.u.GetForegroundWindow()
+        if not foreground:
+            self.last_target = None
+            return None
+        image = process_image_for_window(self.u, self.kernel, foreground)
+        if not is_ryujinx_executable(image):
+            self.last_target = None
+            return None
+
         result = []
-        CALLBACK = ctypes.WINFUNCTYPE(wintypes.BOOL, ctypes.c_void_p, wintypes.LPARAM)
+        CALLBACK = ctypes.WINFUNCTYPE(wintypes.BOOL, ctypes.c_void_p,
+                                     wintypes.LPARAM)
+
         def check(hwnd, _):
-            if not self.u.IsWindowVisible(hwnd) or hwnd == self.hwnd:
+            if hwnd == self.hwnd or not self.u.IsWindowVisible(hwnd):
                 return True
-            text = ctypes.create_unicode_buffer(256)
-            self.u.GetWindowTextW(hwnd, text, 256)
-            if "ryujinx" not in text.value.lower():
+            if self.u.IsIconic(hwnd) or self.u.GetWindow(hwnd, GW_OWNER):
+                return True
+            exe = process_image_for_window(self.u, self.kernel, hwnd)
+            if not is_ryujinx_executable(exe):
                 return True
             rect = RECT()
             if not self.u.GetClientRect(hwnd, ctypes.byref(rect)):
@@ -193,13 +271,23 @@ class OverlayWindow:
             w, h = rect.right - rect.left, rect.bottom - rect.top
             if w < 320 or h < 240:
                 return True
-            at = POINT(0, 0)
-            if self.u.ClientToScreen(hwnd, ctypes.byref(at)):
-                result.append((w*h, (at.x, at.y, w, h)))
+            pos = POINT(0, 0)
+            if self.u.ClientToScreen(hwnd, ctypes.byref(pos)):
+                result.append((hwnd == foreground, w * h,
+                               (pos.x, pos.y, w, h), exe))
             return True
+
         callback = CALLBACK(check)
         self.u.EnumWindows(callback, 0)
-        return max(result)[1] if result else None
+        if not result:
+            self.last_target = None
+            return None
+        selected = max(result, key=lambda x: (x[0], x[1]))
+        if selected[3] != self.last_target:
+            self.last_target = selected[3]
+            print("[BotwCraft HUD] Processus cible verifie :",
+                  selected[3], flush=True)
+        return selected[2]
 
     def new_dib(self, dc, width, height):
         bmi = BITMAPINFO()
@@ -272,10 +360,13 @@ class OverlayWindow:
 def run(name=NAME, rgba=True, fps=20, key_background=False):
     if sys.platform != "win32":
         raise RuntimeError("Windows required")
+    enable_per_monitor_dpi()
     win = OverlayWindow()
     shm = None
     last_id = 0
     last_frame_at = 0.0
+    last_location = None
+    last_frame = None
     try:
         print("[BotwCraft HUD] Waiting for Minecraft overlay; Ctrl+C to stop", flush=True)
         while True:
@@ -292,11 +383,21 @@ def run(name=NAME, rgba=True, fps=20, key_background=False):
                 frame = shm.frame()
                 if frame and frame[3] != last_id:
                     last_id, last_frame_at = frame[3], now
-                    win.draw(frame, where, rgba=rgba, key_background=key_background)
+                    last_frame = frame
+                # If Ryujinx moves or resizes, reposition even if Minecraft
+                # has not published a newer HUD pixel frame yet.
+                if last_frame and now - last_frame_at <= 1.0 and (
+                        frame and frame[3] == last_id or where != last_location):
+                    if frame and frame[3] == last_id or where != last_location:
+                        win.draw(last_frame, where, rgba=rgba,
+                                 key_background=key_background)
+                        last_location = where
                 if now - last_frame_at > 1.0:
-                    win.hide()  # pause/stale frame: never leave ghost HUD over BOTW
+                    win.hide()
+                    last_location = None
             else:
                 win.hide()
+                last_location = None
             time.sleep(1 / fps)
     except KeyboardInterrupt:
         pass
