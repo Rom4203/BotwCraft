@@ -56,6 +56,13 @@ public final class InputBridge {
 				cursorY = b;
 				minecraft.mouseHandler.onMove(handle, a, b, dx, dy);
 			}
+			case Proto.IN_MOUSE_DELTA -> {
+				// Minecraft's OWN sensitivity, inversion and smoothing remain in
+				// MouseHandler. Relative motion never gets a huge window-size offset.
+				if (minecraft.gui.screen() == null && minecraft.player != null) {
+					minecraft.mouseHandler.onMove(handle, cursorX, cursorY, a, b);
+				}
+			}
 			case Proto.IN_TEXT -> {
 				if (minecraft.gui.screen() != null) {
 					minecraft.keyboardHandler.textInput(handle, new String(Character.toChars(a)));
