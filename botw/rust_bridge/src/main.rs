@@ -4,6 +4,8 @@ mod shared;
 mod engine;
 #[cfg(target_os="windows")]
 mod guest_gdb;
+#[cfg(target_os="windows")]
+mod telemetry;
 
 #[cfg(target_os="windows")]
 fn main(){
@@ -43,6 +45,9 @@ fn main(){
  }
  fn serve()->Result<(),Box<dyn std::error::Error>>{
   let state:State=Arc::new(Mutex::new(engine::Engine::new()?));
+  let relay=Arc::clone(&state);
+  thread::Builder::new().name("botwcraft-native-log-relay".into())
+   .spawn(move||telemetry::run(relay))?;
   let sender=Arc::clone(&state);
   thread::Builder::new().name("botwcraft-wxlm-transport".into())
     .spawn(move||guest_gdb::transport_loop(sender))?;
@@ -58,7 +63,7 @@ fn main(){
   println!("[RUST_BRIDGE] Minecraft protocol compatible TCP 127.0.0.1:39847");
   println!("[RUST_BRIDGE] SkyCraft_v1 memory + authoritative Minecraft pose producer ready");
   println!("[RUST_BRIDGE] Input ring remains owned by Rust compositor");
-  println!("[RUST_BRIDGE] Ryujinx GDB guest transport enabled; requires port 22225 and LIVE guest ACK");
+  println!("[RUST_BRIDGE] Native log relay and GDB guest transport enabled (port 22225)");
   println!("[RUST_BRIDGE] BOTW engine actor/camera hooks still required for actual gameplay");
   for conn in server.incoming(){
    match conn {
