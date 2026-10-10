@@ -17,7 +17,12 @@ import org.lwjgl.sdl.SDLVideo;
  * thread, called from MinecraftMixin.
  */
 public final class SkyClient {
-	private static final boolean SHOW_WINDOW = Boolean.getBoolean("skycraft.showWindow");
+	// This branch is the BotwCraft distribution. Legacy SkyCraft rendering
+    // export is unnecessary: Ryujinx already renders Hyrule, while Minecraft
+    // only supplies movement and the hand/HUD. Opt out for Skyrim users.
+    private static final boolean BOTW_NATIVE = Boolean.parseBoolean(
+        System.getProperty("botwcraft.native", "true"));
+    private static final boolean SHOW_WINDOW = Boolean.getBoolean("skycraft.showWindow");
 	// Started by Skyrim (SkyCraft's bundled instance passes -Dskycraft.startHidden=true): no window and
 	// no title-screen music from the first frame, even while Skyrim is paused (Alt-Tabbed) and the
 	// two haven't linked up yet. Otherwise the window only goes once Skyrim is there.
@@ -80,7 +85,7 @@ public final class SkyClient {
 		boolean nowLinked = SkyLink.active();
 		if (nowLinked) {
 			SkyLink.readSkyState(sky); // on a torn read we simply keep last frame's state
-			dev.skycraft.world.SkyWater.refresh();
+			if (!BOTW_NATIVE) dev.skycraft.world.SkyWater.refresh();
 		} else {
 			dev.skycraft.world.SkyWater.clear();
 		}
@@ -90,7 +95,7 @@ public final class SkyClient {
 			if (linked) {
 				tookOver = true;
 				unlinkedHold = null;
-				SkyCollision.startConsumer();
+				if (!BOTW_NATIVE) SkyCollision.startConsumer();
 				applyLinkedOptions();
 			} else {
 				InputBridge.releaseAll();
@@ -111,7 +116,7 @@ public final class SkyClient {
 			InputBridge.releaseAll();
 		}
 		InputBridge.drain(minecraft);
-		ProxySync.frame(minecraft);
+		if (!BOTW_NATIVE) ProxySync.frame(minecraft);
 
 		LocalPlayer player = minecraft.player;
 		if (player == null) {
@@ -184,8 +189,8 @@ public final class SkyClient {
 	/** Called at the end of every client tick. */
 	public static void clientTick(Minecraft minecraft) {
 		MirrorWorld.tick(minecraft);
-		DiscordPresence.tick(minecraft);
-		SkyDigClient.tick(minecraft);
+		if (!BOTW_NATIVE) DiscordPresence.tick(minecraft);
+		if (!BOTW_NATIVE) SkyDigClient.tick(minecraft);
 		freezeWhileUnlinked(minecraft);
 		holdUntilReady(minecraft);
 		publishTick(minecraft);
@@ -389,7 +394,8 @@ public final class SkyClient {
 
 		if ((flags & Proto.MC_IN_WORLD) != 0) {
 			try {
-				WorldExporter.frame(minecraft, minecraft.getDeltaTracker().getGameTimeDeltaPartialTick(false));
+				if (!BOTW_NATIVE)
+					WorldExporter.frame(minecraft, minecraft.getDeltaTracker().getGameTimeDeltaPartialTick(false));
 			} catch (RuntimeException e) {
 				if (exporterErrors++ < 5) {
 					SkyCraft.LOG.error("SkyCraft: world export failed", e);
@@ -401,6 +407,12 @@ public final class SkyClient {
 
 	/** End of the frame: render at most once per Skyrim frame instead of spinning freely. */
 	public static void paceFrame() {
+        // The SkyCraft original spin-waits up to 25ms for Skyrim to advance
+        // SkyState.seq on every Minecraft render. BotwCraft's Rust host only
+        // updates that state on fresh guest-position events, not every frame:
+        // waiting here causes a permanent frame-rate collapse and late inputs.
+        if (BOTW_NATIVE) return;
+
 		if (!linked) {
 			return;
 		}
@@ -420,45 +432,3 @@ public final class SkyClient {
 		skyrimStalled = seqNow == lastPacedSeq;
 		lastPacedSeq = seqNow;
 	}
-
-	private static void applyLinkedOptions() {
-		Minecraft minecraft = Minecraft.getInstance();
-		var options = minecraft.options;
-		options.pauseOnLostFocus = false;
-		options.vignette().set(false);
-		options.enableVsync().set(false);
-		options.framerateLimit().set(260);
-		// Minecraft doesn't draw the world itself; these only decide how far out placed blocks,
-		// arrows and Skyrim NPC stand-ins stay loaded and simulated.
-		options.renderDistance().set(8);
-		options.simulationDistance().set(8);
-		options.autoJump().set(false);
-		options.onboardAccessibility = false;
-		if (options.tutorialStep != net.minecraft.client.tutorial.TutorialSteps.NONE) {
-			minecraft.getTutorial().setStep(net.minecraft.client.tutorial.TutorialSteps.NONE);
-		}
-		options.getSoundSourceOptionInstance(net.minecraft.sounds.SoundSource.MUSIC).set(0.0);
-		options.save();
-	}
-
-	private static void hideWindowOnce(Minecraft minecraft) {
-		if (windowHidden || SHOW_WINDOW) {
-			return;
-		}
-		windowHidden = true;
-		SDLVideo.SDL_HideWindow(minecraft.getWindow().handle());
-		SkyCraft.LOG.info("SkyCraft: game window hidden (run with -Dskycraft.showWindow=true to keep it)");
-	}
-
-	private static void applyViewportSize(Minecraft minecraft) {
-		int w = Math.min(sky.viewportW, Proto.MAX_OVERLAY_W);
-		int h = Math.min(sky.viewportH, Proto.MAX_OVERLAY_H);
-		if (w <= 0 || h <= 0 || (w == appliedViewportW && h == appliedViewportH)) {
-			return;
-		}
-		appliedViewportW = w;
-		appliedViewportH = h;
-		minecraft.getWindow().setWindowed(w, h);
-		SkyCraft.LOG.info("SkyCraft: sizing overlay to Skyrim viewport {}x{}", w, h);
-	}
-}
