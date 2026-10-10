@@ -357,7 +357,7 @@ class OverlayWindow:
             if dc: self.g.DeleteDC(dc)
         if self.hwnd: self.u.DestroyWindow(self.hwnd)
 
-def run(name=NAME, rgba=True, fps=20, key_background=False):
+def run(name=NAME, rgba=True, fps=60, key_background=False):
     if sys.platform != "win32":
         raise RuntimeError("Windows required")
     enable_per_monitor_dpi()
@@ -409,7 +409,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--name", default=NAME)
     parser.add_argument("--pixel-format", choices=("rgba", "bgra"), default="rgba")
-    parser.add_argument("--fps", type=int, default=20)
+    parser.add_argument("--fps", type=int, default=60)
     parser.add_argument("--key-background", action="store_true",
                         help="Experimental 3D Minecraft preview: key out sky pixels (no BOTW depth)")
     args = parser.parse_args()
