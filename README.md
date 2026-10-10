@@ -1,3 +1,98 @@
+# BotwCraft — Minecraft inside Breath of the Wild (native Switch port)
+
+**New Switch target: BOTW 1.5.0 in Ryujinx** (not 1.0.0, and do not assume
+1.6.0 has matching code addresses). The Minecraft Java/Fabric side is based on
+[SkyCraft](https://github.com/chasmlol/SkyCraft). The Zelda side uses the real
+[WiiXLaunch](https://github.com/BladesawStudios/WiiXLaunch) host plus its
+[wiixlaunch-botw](https://github.com/BladesawStudios/wiixlaunch-botw) game
+module, installed as pinned, nested Git submodules.
+
+**Status: native game port in progress, not yet playable.** This repository
+does not claim that Minecraft's blocks, movement and collisions work in BOTW.
+Automated compilation and host-side API tests do NOT prove the actual
+game-engine integration. Do not install an experimental native mod expecting
+SkyCraft gameplay; back up saves before engine tests.
+
+## Native WiiXLaunch integration (primary development path)
+
+Dependencies are **part of the Git repository** instead of an uncontrolled
+`git clone` of the latest revision:
+
+- `WiiXLaunch` gitlink:
+  `30e0502ff2abb76b1816e8271d4126e0a95ac9fc`.
+- `WiiXLaunch/vendor/wiixlaunch-botw` nested gitlink:
+  `49e07a6acd6d675a98cba3bb8fc244c39bce8790`
+  (newer than the BladesawStudios fork's main head).
+- The WiiXLaunch BOTW Switch target contains a *verified 1.5.0
+  fingerprint* `0xA982D2BC` and NVN graphics primitives.
+- The stock modding API still reports `botw.player.SupportsPosition == 0`
+  on Switch. BotwCraft now adds a **fingerprint-locked, native 1.5.0
+  `PlayerInfo` reader** using the decompilation's player singleton and
+  `getPlayerPos` method, and sends actual coordinates to the SkyCraft host
+  relay via Ryujinx logs. The unsafe old PlayerTick patch stays disabled.
+  This source has automated guards and tests but **has not yet been proven
+  in an emulator playtest**.
+
+**Working repository structure:**
+
+```text
+fabric/                       original SkyCraft-based Minecraft game logic
+protocol/                     byte-compatible SkyCraft v11 shared memory
+WiiXLaunch/                   pinned upstream Switch host (Git submodule)
+  vendor/wiixlaunch-botw/     pinned BOTW 1.5.0 support module
+botw/guest_mod/mod.cpp        version-capability-aware native adapter
+botw/patch_botw15_player_pose.py   exact 1.5.0 Link position reader in NVN host
+botw/ryujinx_log_relay.py     actual native position logs -> SkyCraft host
+botw/native_mesh_bridge.py   Minecraft RenderRing -> BOTW native NVN meshes on SD
+botw/native_guest_mesh.hpp   bounded checksummed native vertex packet protocol
+botw/setup_wiixlaunch.py     safe pinned source installation
+```
+
+`BUILD_AND_PACKAGE.bat` can fetch the pinned modules even from a downloaded
+GitHub ZIP. A normal Git clone can use `git submodule update --init
+--recursive`. The native integration is checked by
+[GitHub Actions](https://github.com/Rom4203/BotwCraft/actions/workflows/botw-native-sources.yml):
+it fetches the real WiiXLaunch code, applies the crash guards and compiles
+the native adapter against its generated imports. Python bridge tests run on
+Windows and Linux.
+
+### Still required for SkyCraft-level gameplay
+
+1. Validate the new **Switch 1.5.0 PlayerInfo Link position reader** in a
+   real Ryujinx session, then reverse engineer authoritative movement setter,
+   camera matrices and collision accessors.
+2. Send reliable Link position and terrain collision from the guest to the
+   Minecraft shared-memory host; send Minecraft's authoritative state back.
+3. The **native NVN mesh transport is now implemented**: SkyCraft
+   RenderRing → Windows SD-bridge → checksummed BWC1 packets → BOTW Switch NVN
+   DrawMesh callback. The next step is to replace its provisional Minecraft
+   camera projection with Zelda's actual camera/depth buffer and texture atlas.
+4. Test the native SD mount, GPU draw, collision and Link sync in a real
+   BOTW 1.5.0 Ryujinx session before publishing a playable ZIP.
+
+The old `PREVIEW_BLOCKS.bat` experiment remains in the tree for reference
+only. **It is not the intended game port** and should not be confused with
+the native mod described above.
+
+## Windows development build
+
+1. Download this branch's source archive and extract it.
+2. Install JDK 25, Python, Git, and devkitPro/devkitA64. The current script expects the owner's tool locations on drive D: (see `BUILD_AND_PACKAGE.bat`).
+3. Run `BUILD_AND_PACKAGE.bat` once. It checks out the pinned WiiXLaunch + wiixlaunch-botw source tree, and applies the Switch player-hook guard, builds both game-side components and packages them.
+4. The result is `dist/BotwCraft-experimental.zip`. It includes the native BOTW host/guest modules, the Minecraft Fabric JAR and a Windows launcher for the read-only bridge.
+5. **Do not install as a playable release.** The native movement, block renderer and real BOTW/Minecraft sync remain to be implemented.
+
+Read [the native render bridge](docs/BOTW_NATIVE_MESH_BRIDGE.md),
+[the prototype design](docs/BOTW_PROTOTYPE.md), [BOTW API status](docs/BOTW_MOD_API.md) and [the local bridge protocol](docs/HOST_BRIDGE.md).
+
+## Upstream attribution
+
+The Minecraft/Fabric and protocol code derives from **[SkyCraft by chasmlol](https://github.com/chasmlol/SkyCraft)** under the MIT license. This project is not affiliated with Nintendo, Mojang or Microsoft and does not provide game assets, firmware or keys.
+
+---
+
+## Upstream SkyCraft documentation (Skyrim version)
+
 # SkyCraft
 
 ![SkyCraft: a Minecraft player walking through Riverwood with the Minecraft HUD](docs/screenshot.jpg)

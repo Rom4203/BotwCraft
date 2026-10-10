@@ -1,0 +1,46 @@
+name: Minecraft Fabric build
+on:
+  push:
+    branches: [botw-ryujinx-development]
+    paths:
+      - 'fabric/**'
+      - '.github/workflows/botw-fabric-build.yml'
+      - 'botw/**'
+      - 'packaging/**'
+      - 'package_preview.py'
+  pull_request:
+    paths:
+      - 'fabric/**'
+      - '.github/workflows/botw-fabric-build.yml'
+jobs:
+  fabric:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Compile Minecraft 26.3 Fabric mod
+        working-directory: fabric
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon --stacktrace build
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Package installable Windows preview (no native Switch mods)
+        run: python package_preview.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BotwCraft-Blocks-Preview-Windows
+          path: dist/BotwCraft-Blocks-Preview.zip
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: botwcraft-fabric-preview
+          path: fabric/build/libs/*jar
+          if-no-files-found: error

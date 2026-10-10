@@ -8,8 +8,9 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /**
- * Skyrim draws the world. While linked, Minecraft renders nothing of its own level (no sky,
- * clouds, fog or terrain) so the overlay is just hand + HUD on a transparent background.
+ * BotwCraft HUD-only capture renders just Minecraft's original hand/GUI.
+ * Skip the Minecraft terrain ONLY while explicitly capturing HUD pixels.
+ * Keep Minecraft input, physics and GUI fully active; no screen takeover.
  */
 @Mixin(LevelRenderer.class)
 public abstract class LevelRendererMixin {
@@ -19,7 +20,7 @@ public abstract class LevelRendererMixin {
 		cancellable = true
 	)
 	private void skycraft$skipLevel(CallbackInfo ci) {
-		if (SkyClient.linked()) {
+		if (SkyClient.hudCaptureActive() && !dev.skycraft.client.BlockPreview.enabled()) {
 			ci.cancel();
 		}
 	}

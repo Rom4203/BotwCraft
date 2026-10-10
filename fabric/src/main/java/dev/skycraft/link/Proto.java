@@ -211,6 +211,8 @@ public final class Proto {
 	public static final int IN_CURSOR = 4;
 	public static final int IN_TEXT = 5;
 	public static final int IN_RELEASE_ALL = 6;
+	/** Third-window compositor sends relative FPS mouse deltas, not absolute UI positions. */
+	public static final int IN_MOUSE_DELTA = 9;
 
 	// Collision ring (relative to OFF_COLLISION_RING)
 	public static final long CR_HEAD = 0x00;

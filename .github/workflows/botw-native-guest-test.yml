@@ -1,0 +1,27 @@
+name: BOTW native guest API tests
+on:
+  push:
+    branches: [botw-ryujinx-development]
+    paths:
+      - 'botw/guest_mod/**'
+      - 'build_botw_windows.bat'
+      - 'package_botw_windows.py'
+      - '.github/workflows/botw-native-guest-test.yml'
+  pull_request:
+    paths:
+      - 'botw/guest_mod/**'
+      - '.github/workflows/botw-native-guest-test.yml'
+jobs:
+  native_api_contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Obtain upstream WiiXLaunch import headers
+        run: git clone --depth=1 https://github.com/BladesawStudios/WiiXLaunch.git /tmp/wiixlaunch
+      - name: Compile native guest against actual WiiXLaunch imports
+        run: |
+          g++ -std=c++20 -O1 -g -Wall -Wextra -I/tmp/wiixlaunch/include \
+            botw/guest_mod/mod.cpp botw/guest_mod/test_native.cpp -o /tmp/botwcraft-native-test
+      - name: Prove unsupported BOTW build installs no unsafe hook
+        run: /tmp/botwcraft-native-test

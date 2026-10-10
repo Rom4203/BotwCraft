@@ -2,3 +2,7 @@
 	path = skse/extern/CommonLibSSE-NG
 	url = https://github.com/alandtse/CommonLibVR.git
 	branch = ng
+
+[submodule "WiiXLaunch"]
+	path = WiiXLaunch
+	url = https://github.com/BladesawStudios/WiiXLaunch.git

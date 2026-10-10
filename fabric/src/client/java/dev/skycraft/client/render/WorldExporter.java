@@ -102,7 +102,7 @@ public final class WorldExporter {
 
 	public static void frame(Minecraft minecraft, float partialTick) {
 		ClientLevel level = minecraft.level;
-		if (level == null || minecraft.player == null || !SkyLink.active()) {
+		if (level == null || minecraft.player == null || !SkyLink.transportOpen()) {
 			return;
 		}
 		if (sentGeneration != SkyLink.generation() || sentLevel != level || atlas == null || atlas.stale(minecraft)) {
