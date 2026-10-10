@@ -77,6 +77,13 @@ struct alignas(16) Mailbox {
     // selector: 0=legacy probe, 1=fast[0], 2=fast[1].
     volatile uint32_t fast_slot;
     volatile Pose fast[2];
+    // Additive, read-only host telemetry. No original BDP3 field moves.
+    // One raycast work request per Zelda player tick. Height queries are
+    // against actual game Havok terrain, not screenshots/teleport guesses.
+    volatile uint32_t terrain_seq;
+    volatile uint32_t terrain_mask;
+    volatile float terrain_center[3];
+    volatile float terrain_heights[9];
 };
 static_assert(offsetof(Mailbox, packet) == 40);
 static_assert(offsetof(Mailbox, acknowledged_seq) == 152);
@@ -590,6 +597,124 @@ static void installLinkSoundMute(){
     S::Log("[BOTW_NATIVE] LINK_AUDIO_SOUNDLINK_VOLUME_FILTER_ACTIVE");
 }
 
+// Native NX150 symbols matched against zeldaret/botw uking_functions.csv.
+// ksys::phys::RayCastForRequest::allocRequest       main+0x00FC5590
+// RayCast::enableLayer                              main+0x00FC36A4
+// RayCast::setStartAndEnd                           main+0x00FC38A0
+// RayCastForRequest::submitRequest                  main+0x00FC55AC
+// RayCastForRequest::isRequestFinished              main+0x00FC55E8
+// RayCastForRequest::release                        main+0x00FC55D4
+// The result fields are from physRayCast.h (NX150, 64-bit):
+// mHasHit at +0x30, mHitNormal.y +0x38, mHitFraction +0x40.
+// An asynchronous Havok raycast is necessary to avoid querying a locked
+// physics world from the player callback. NEVER modify Minecraft positions.
+struct Vec3Raw {float x,y,z;};
+using TerrainAlloc = void*(*)(void*,int);
+using TerrainLayers = void(*)(void*,int);
+using TerrainSetRay = void(*)(void*,const Vec3Raw*,const Vec3Raw*);
+using TerrainSubmit = bool(*)(void*,int);
+using TerrainDone = bool(*)(const void*);
+using TerrainRelease = void(*)(void*);
+static TerrainAlloc tAlloc=nullptr;
+static TerrainLayers tLayers=nullptr;
+static TerrainSetRay tSetRay=nullptr;
+static TerrainSubmit tSubmit=nullptr;
+static TerrainDone tDone=nullptr;
+static TerrainRelease tRelease=nullptr;
+static bool tTried=false;
+static bool tReady=false;
+static bool tLogged=false;
+static void* tPending=nullptr;
+static uint32_t tIndex=0;
+static uint32_t tMask=0;
+static Vec3Raw tCenter{};
+static Vec3Raw tFrom{};
+static Vec3Raw tTo{};
+static float tHeights[9]={};
+static constexpr float kTerrainGridStep=2.75f;
+static void initializeTerrainQuery(){
+    if(tTried)return;
+    tTried=true;
+    if(!S::ResolveTarget)return;
+    tAlloc=reinterpret_cast<TerrainAlloc>(S::ResolveTarget(0x00fc5590u,0));
+    tLayers=reinterpret_cast<TerrainLayers>(S::ResolveTarget(0x00fc36a4u,0));
+    tSetRay=reinterpret_cast<TerrainSetRay>(S::ResolveTarget(0x00fc38a0u,0));
+    tSubmit=reinterpret_cast<TerrainSubmit>(S::ResolveTarget(0x00fc55acu,0));
+    tDone=reinterpret_cast<TerrainDone>(S::ResolveTarget(0x00fc55e8u,0));
+    tRelease=reinterpret_cast<TerrainRelease>(S::ResolveTarget(0x00fc55d4u,0));
+    tReady=tAlloc && tLayers && tSetRay && tSubmit && tDone && tRelease;
+    S::Log(tReady?"[BOTW_NATIVE] TERRAIN_HAVOK_REQUEST_SYMBOLS_READY":
+                 "[BOTW_NATIVE] TERRAIN_HAVOK_SYMBOLS_MISSING");
+}
+static void sampleHavokTerrain(const Pose& pose) {
+    initializeTerrainQuery();
+    if(!tReady)return;
+    // Do not release requests until the physics worker has finished.
+    if(tPending){
+        if(!tDone(tPending))return;
+        // This is the actual result from BOTW's Havok ray query.
+        const uintptr_t at=reinterpret_cast<uintptr_t>(tPending);
+        const volatile uint8_t* hit=reinterpret_cast<const volatile uint8_t*>(at+0x30);
+        const volatile float* normalY=reinterpret_cast<const volatile float*>(at+0x38);
+        const volatile float* fraction=reinterpret_cast<const volatile float*>(at+0x40);
+        const float frac=*fraction;
+        const float ny=*normalY;
+        if(*hit && finiteFloat(frac) && frac>=0.0f && frac<=1.0f &&
+          finiteFloat(ny) && ny>0.42f){
+            tHeights[tIndex]=tFrom.y+(tTo.y-tFrom.y)*frac;
+            tMask|=(1u<<tIndex);
+        }
+        tRelease(tPending);
+        tPending=nullptr;
+        ++tIndex;
+        if(tIndex==9){
+            const uint32_t next=g_BotwCraftLiveMailbox.terrain_seq+2u;
+            g_BotwCraftLiveMailbox.terrain_seq=next-1u;
+            g_BotwCraftLiveMailbox.terrain_mask=tMask;
+            g_BotwCraftLiveMailbox.terrain_center[0]=tCenter.x;
+            g_BotwCraftLiveMailbox.terrain_center[1]=tCenter.y;
+            g_BotwCraftLiveMailbox.terrain_center[2]=tCenter.z;
+            for(unsigned i=0;i<9;i++)
+                g_BotwCraftLiveMailbox.terrain_heights[i]=tHeights[i];
+            g_BotwCraftLiveMailbox.terrain_seq=next;
+            if(tMask && !tLogged){
+                tLogged=true;
+                S::Log("[BOTW_NATIVE] TERRAIN_HAVOK_FIRST_GROUND_HIT");
+            }
+            tIndex=0;
+        }
+    }
+    if(tIndex==0){
+        tCenter={pose.position[0],pose.position[1],pose.position[2]};
+        tMask=0;
+    }
+    // If Minecraft has travelled while old rays ran, start a new sample
+    // around its current BOTW mapped position instead of an outdated patch.
+    if((pose.position[0]-tCenter.x)*(pose.position[0]-tCenter.x)+
+       (pose.position[2]-tCenter.z)*(pose.position[2]-tCenter.z)>25.f){
+        tIndex=0;tMask=0;
+        tCenter={pose.position[0],pose.position[1],pose.position[2]};
+    }
+    const unsigned gx=tIndex%3u, gz=tIndex/3u;
+    const float x=tCenter.x+(static_cast<float>(gx)-1.f)*kTerrainGridStep;
+    const float z=tCenter.z+(static_cast<float>(gz)-1.f)*kTerrainGridStep;
+    tFrom={x,tCenter.y+3.0f,z};
+    tTo={x,tCenter.y-10.0f,z};
+    // HitAll=15. Probe ground and fixed objects, but NOT players, ragdolls
+    // or sensors. The game owns the physics results.
+    void* request=tAlloc(nullptr,15);
+    if(!request)return;
+    tLayers(request,8); // EntityGround
+    tLayers(request,9); // EntityGroundSmooth
+    tLayers(request,10);// EntityGroundRough
+    tLayers(request,2); // EntityGroundObject
+    tSetRay(request,&tFrom,&tTo);
+    if(!tSubmit(request,0)){
+        tRelease(request);
+        return;
+    }
+    tPending=request;
+}
 extern "C" __attribute__((used)) void BotwCraftPlayerTick() {
     ++s_ticks;
     if (s_ticks==1u) S::Log("[BOTW_NATIVE] PLAYER_FRAME_TICK_RUNNING");
@@ -683,6 +808,9 @@ extern "C" __attribute__((used)) void BotwCraftPlayerTick() {
     s_activeActorHandle=actor;
     const bool warped = warpLink(actor,p);
     const bool camera = updateCameraFromGame(p);
+    // Opt-in terrain collision sampling: this does NOT warp Steve, alter
+    // Link's actor controller, change the camera or manipulate input.
+    sampleHavokTerrain(p);
     // Link's renderer is not needed for first-person BotwCraft. Do NOT
     // couple visibility to camera-matrix hook timing: that hook may run after
     // the player tick or report a one-frame delay, leaving Link on screen.
