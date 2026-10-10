@@ -140,20 +140,32 @@ fn active_packet(packet:&[u8])->bool{
  let flags=u32::from_le_bytes(packet[12..16].try_into().unwrap());
  seq!=0 && seq&1==0 && magic==0x31504442 && version==1 && (flags&0x13)==0x13
 }
-// BDP2: write a COMPLETE pose to the inactive slot and then atomically
-// publish the 4-byte selector. Two GDB round trips, no seqlock busy-loop,
-// and the game frame can always read a stable pose while we write the next.
+// BDP3: after a one-time mode switch, alternate complete CRC-checked
+// 112-byte slots. Exactly ONE GDB 'M' write per incoming movement pose,
+// avoiding the prior selector roundtrip. Zelda tests both CRCs in its tick.
 const FAST_SEL:usize=204;
 const FAST_SLOT_0:usize=208;
 const FAST_SLOT_1:usize=320;
-fn publish_fast(remote:&mut Remote,addr:usize,packet:&[u8],selected:&mut u32)->io::Result<()>{
-    if !active_packet(packet) &&
-       packet[12..16]!=[0u8;4] {return Err(other("Invalid outgoing pose flags"))}
-    let next=if *selected==1 {2u32} else {1u32};
-    let offset=if next==1 {FAST_SLOT_0}else{FAST_SLOT_1};
-    remote.write(addr+offset,packet)?;
-    remote.write(addr+FAST_SEL,&next.to_le_bytes())?;
-    *selected=next;
+fn fnv_pose(packet:&[u8;POSE_BYTES])->u32 {
+    let mut hash=2166136261u32;
+    for (i,v) in packet.iter().enumerate(){
+        if (104..108).contains(&i){continue}
+        hash=(hash ^ *v as u32).wrapping_mul(16777619u32);
+    }
+    hash
+}
+fn publish_fast(remote:&mut Remote,addr:usize,packet:&[u8],slot:&mut u32)->io::Result<()>{
+    let flags=u32::from_le_bytes(packet[12..16].try_into().unwrap());
+    if flags!=0 && !active_packet(packet) {
+        return Err(other("Refusing invalid BDP3 packet"));
+    }
+    let mut pose=[0u8;POSE_BYTES];
+    pose.copy_from_slice(packet);
+    let crc=fnv_pose(&pose);
+    pose[104..108].copy_from_slice(&crc.to_le_bytes());
+    let next=if *slot==1{2u32}else{1u32};
+    remote.write(addr+if next==1{FAST_SLOT_0}else{FAST_SLOT_1},&pose)?;
+    *slot=next;
     Ok(())
 }
 fn materially_changed(a:&[u8],b:&[u8])->bool{
@@ -211,10 +223,13 @@ pub fn transport_loop(state:Arc<Mutex<Engine>>){
        // Reset to legacy before authenticating if another bridge was used.
        remote.write(addr+FAST_SEL,&0u32.to_le_bytes())?;
        remote.authenticate(addr)?;
+       // One-time transition to CRC-verified double-buffer mode.
+       // The NX150 mod never reads a half-updated slot.
+       remote.write(addr+FAST_SEL,&3u32.to_le_bytes())?;
        authenticated=true;
        selected=0;
        last_pose=None;
-       println!("[RUST_LINK] Authenticated; BDP2 60 Hz double-buffer mode");
+       println!("[RUST_LINK] Authenticated; BDP3 one-write double-buffer mode");
       }
       let change=last_pose.as_ref().is_none_or(|p|materially_changed(p,&pose));
       // Keepalive even while still, so native stale detection can disarm.
@@ -228,7 +243,7 @@ pub fn transport_loop(state:Arc<Mutex<Engine>>){
        last_tx=Instant::now();
       }
     } else if authenticated {
-       // Exactly one disarm is sent through BDP2, not to an unused
+       // Exactly one disarm is sent through BDP3, not to an unused
        // legacy slot. Then stop writing while Minecraft is inactive.
        let mut off=pose;
        let seq=u32::from_le_bytes(off[0..4].try_into().unwrap())&!1;
@@ -246,7 +261,7 @@ pub fn transport_loop(state:Arc<Mutex<Engine>>){
          u32::from_le_bytes(status[4..8].try_into().unwrap()))
       }else{(0,0)};
       let mean=if latency_count>0{latency_sum/latency_count as u128}else{0};
-      println!("[RUST_LINK] LinkTick={} FPS_MATRIX_FRAMES={} LINK_HIDDEN={} active={} BDP2_rtt_us={} samples={} still_refresh=300ms",
+      println!("[RUST_LINK] LinkTick={} FPS_MATRIX_FRAMES={} LINK_HIDDEN={} active={} BDP3_rtt_us={} samples={} still_refresh=300ms",
          last_guest_tick,fps,hidden,armed,mean,latency_count);
       latency_sum=0;latency_count=0;
       last_report=Instant::now();
@@ -278,6 +293,14 @@ mod tests{
    assert!(active_packet(&p));
    p[12..16].copy_from_slice(&0x3u32.to_le_bytes());
    assert!(!active_packet(&p));
+ }
+ #[test]fn checksum_ignores_only_reserved_crc_field(){
+   let mut a=[0u8;POSE_BYTES];
+   let h=fnv_pose(&a);
+   a[104..108].copy_from_slice(&h.to_le_bytes());
+   assert_eq!(fnv_pose(&a),h);
+   a[36]=1;
+   assert_ne!(fnv_pose(&a),h);
  }
  #[test]fn material_change_ignores_frame_counter_but_not_camera(){
    let a=[0u8;POSE_BYTES];
