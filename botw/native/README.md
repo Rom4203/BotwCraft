@@ -1,32 +1,25 @@
-# BOTW 1.5.0 native creative flight (work in progress)
+# BOTW 1.5.0 Minecraft-authoritative movement sync (work in progress)
 
-This directory implements a **real native consumer** for BDP1 absolute Minecraft flight poses. It is intentionally isolated from SkyCraft's Skyrim plugin.
+**Scope: every Minecraft movement mode**, not a creative-flight feature. Minecraft is the authoritative simulation for walking, sprinting, jumps, falling, swimming, crawling, riding and flying. Zelda renders Hyrule, its actors and its camera. The independent Rust compositor remains the gameplay window.
 
-## Behavior
+## First milestone (no BOTW collisions)
 
-- Reads the 112-byte little-endian BDP1 record using a sequence check.
-- Rejects stale/invalid data (older than 1000 ms), unarmed sessions and non-flying poses.
-- On a valid frame: disables BOTW player physics, sets the absolute Link transform, points the real camera from Minecraft's eye along Minecraft's forward vector, hides Link's model.
-- On disengage: restores player visibility and physics. No virtual gamepad input or stick emulation.
+- Read fresh absolute Minecraft player position, eye and look direction from BDP1, without requiring a creative/fly flag.
+- Maintain a calibrated world-origin mapping from Minecraft to BOTW instead of copying incompatible absolute coordinates blindly.
+- Send transforms to Link's actor via a verified in-game BOTW hook (never a gamepad) and render from Minecraft's actual first-person eye and look vector.
+- Hide Link's model, **not** the actor itself. Temporarily disable Zelda character physics/collision enforcement so Minecraft's movements remain authoritative.
+- Keep the last safe in-game state when the packet is stale or Minecraft disconnects; restore normal game visibility/physics when disarming.
 
-## What is still missing
+## Intended SkyCraft-style integration later
 
-**Not yet playable.** The current shipped `botwcraft.wxlm` reports `BOTW_NATIVE_UNSUPPORTED: player position API absent` and `no Link pose hook installed`.
+- Read Zelda geometry and dynamic collider contacts and feed them into Minecraft's collision simulation.
+- Minecraft continues computing motion and deciding contacts. Zelda does not take over movement.
+- Sync block placement/destruction, rendering, interactions and combat in later phases, using dedicated protocols rather than overloading player-position packets.
 
-A *source-based* BOTW 1.5.0 WiiXLaunch engine adapter must implement these four callbacks:
-- `set_player_transform`: Link actor transform + associated physics position
-- `set_camera_lookat`: actual active LookAtCamera state, not an overlay/projection trick
-- `set_player_visible`: hide player mesh while keeping actor alive
-- `set_player_physics_enabled`: bypass collision/gravity for Minecraft creative flight
+## What is actually implemented now
 
-Wire `bwc_flight_tick` into the engine update hook (after guest BDP1 mailbox has been mapped and host/guest clock alignment is validated). Provide an actual mailbox address derived from the loaded module, not an arbitrary scanned host-memory marker.
+`flight_controller.c` is a transport-independent, guarded **all-mode pose consumer** (the historical filename predates the scope correction). It does not require flying. It requests camera, actor transform, visibility and temporary physics-bypass callbacks. It is **not a complete game mod**.
 
-**Important:** host `host_uptime_ms` and guest time must share the same clock domain or be translated in the adapter before calling tick.
+The existing `botwcraft.wxlm` reports `BOTW_NATIVE_UNSUPPORTED: player position API absent` and `no Link pose hook installed`. To make this real, WiiXLaunch BOTW 1.5.0 native sources and verified bindings for `set_player_transform`, `set_camera_lookat`, `set_player_visible`, `set_player_physics_enabled` are needed. The host must also publish matching BDP1 packets and map the correct guest mailbox. Validate actual packet structure, ownership and clock alignment before deployment; do not write to memory just because a marker matches.
 
-Do not replace the compositor: the separate Rust window remains the gameplay window. Never deploy until callbacks are verified for the exact BOTW v1.5.0 build. Back up saves.
-
-## Protocol
-
-Header: `flight_controller.h`. Implementation: `flight_controller.c`. Both are portable C11 (apart from Nintendo Switch-specific hook implementations to be supplied).
-
-This is the native execution layer, **not** a compiled `.wxlm` or modified `subsdk9`.
+This directory does not compile or install `.wxlm`; SkyCraft on `main` is unaffected.
