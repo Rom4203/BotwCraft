@@ -520,6 +520,76 @@ static void printGuestMailboxAddress() {
     S::Log(line);
 }
 
+// Suppress only BOTW Link actor's SOUNDLINK effects, preserving the world
+// ambience, music and all unrelated actors. The NX150 sound function
+// xlink2::ResourceAccessorSLink::getVolume is at main+0x00BD0DCC.
+// xlink2::UserInstance::mUser is +0x30, User::mUserName is +0x10,
+// confirmed against xlink2 headers used by zeldaret/botw.
+//
+// Hook is only installed after the normal working V8 player tick resolves
+// Link; it never alters Link's transform, camera, mesh, or Minecraft sync.
+static volatile uint32_t s_muteLinkSLink = 0;
+static bool s_playerAudioHookAttempted = false;
+static bool s_playerAudioHookInstalled = false;
+static bool s_loggedMutedLink = false;
+static volatile uint32_t s_linkSfxSuppressed = 0;
+using SLinkGetVolume = float (*)(void*,const void*,const void*);
+static SLinkGetVolume s_originalSLinkVolume = nullptr;
+
+static bool strContainsNoCase(const char* name,const char* needle){
+    if(!name || !needle)return false;
+    for(unsigned i=0; i<96 && name[i]; ++i){
+        unsigned j=0;
+        while(j<16 && needle[j] && i+j<96 && name[i+j]){
+            char a=name[i+j],b=needle[j];
+            if(a>='A' && a<='Z')a+=32;
+            if(b>='A' && b<='Z')b+=32;
+            if(a!=b)break;
+            ++j;
+        }
+        if(needle[j]==0)return true;
+    }
+    return false;
+}
+static bool isLinkSoundSource(const void* instance){
+    const uintptr_t p=reinterpret_cast<uintptr_t>(instance);
+    if(p<0x10000 || (p&7u))return false;
+    // Access only the real UserInstance pointer supplied by native
+    // ResourceAccessorSLink::getVolume. Null/misaligned user => no mute.
+    const uintptr_t user=*reinterpret_cast<const volatile uintptr_t*>(p+0x30);
+    if(user<0x10000 || (user&7u))return false;
+    const uintptr_t namePtr=*reinterpret_cast<const volatile uintptr_t*>(user+0x10);
+    if(namePtr<0x10000)return false;
+    const char* name=reinterpret_cast<const char*>(namePtr);
+    return strContainsNoCase(name,"player") ||
+           strContainsNoCase(name,"link");
+}
+extern "C" __attribute__((used)) float BotwCraftSelectivePlayerSoundVolume(
+        void* accessor,const void* callTable,const void* userInstance){
+    if(s_muteLinkSLink && isLinkSoundSource(userInstance)){
+        ++s_linkSfxSuppressed;
+        return 0.0f; // Mute ALL SoundLink events belonging to Link only.
+    }
+    return s_originalSLinkVolume
+        ? s_originalSLinkVolume(accessor,callTable,userInstance):1.0f;
+}
+static void installLinkSoundMute(){
+    if(s_playerAudioHookAttempted)return;
+    s_playerAudioHookAttempted=true;
+    if(!S::InstallHook || !S::ResolveTarget)return;
+    const uintptr_t at=S::ResolveTarget(0x00bd0dccu,0);
+    if(!at || (at&3u))return;
+    const uintptr_t old=S::InstallHook(
+        at,reinterpret_cast<uintptr_t>(&BotwCraftSelectivePlayerSoundVolume));
+    if(!old){
+        S::Log("[BOTW_NATIVE] LINK_AUDIO_HOOK_REFUSED");
+        return;
+    }
+    s_originalSLinkVolume=reinterpret_cast<SLinkGetVolume>(old);
+    s_playerAudioHookInstalled=true;
+    S::Log("[BOTW_NATIVE] LINK_AUDIO_SOUNDLINK_VOLUME_FILTER_ACTIVE");
+}
+
 extern "C" __attribute__((used)) void BotwCraftPlayerTick() {
     ++s_ticks;
     if (s_ticks==1u) S::Log("[BOTW_NATIVE] PLAYER_FRAME_TICK_RUNNING");
@@ -528,6 +598,11 @@ extern "C" __attribute__((used)) void BotwCraftPlayerTick() {
     const uint32_t actor = get ? get() : 0;
     const bool actorReady = actor && valid && valid(actor);
     g_BotwCraftLiveMailbox.runtime_state = actorReady ? kActorSeen : kNoActor;
+    if(!actorReady)s_muteLinkSLink=0;
+    if(s_linkSfxSuppressed && !s_loggedMutedLink){
+        s_loggedMutedLink=true;
+        S::Log("[BOTW_NATIVE] LINK_AUDIO_PLAYER_SOUND_SUPPRESSED");
+    }
     g_BotwCraftLiveMailbox.player_valid = 0;
     if (actorReady && S::ActorUnsafeRawPointer) {
         const uintptr_t raw = S::ActorUnsafeRawPointer(actor);
@@ -557,6 +632,7 @@ extern "C" __attribute__((used)) void BotwCraftPlayerTick() {
     // WHICH of several identically marked guest-memory host mappings is live.
     g_BotwCraftLiveMailbox.acknowledged_seq = p.seq;
     if ((p.flags & 3u) != 3u || !actorReady) {
+        s_muteLinkSLink=0;
         if (actorReady) updateVisualModel(actor,false);
         return;
     }
@@ -574,6 +650,7 @@ extern "C" __attribute__((used)) void BotwCraftPlayerTick() {
             s_loggedTimeout = true;
             S::Log("[BOTW_NATIVE] Minecraft pose stale: game control disarmed");
         }
+        s_muteLinkSLink=0;
         updateVisualModel(actor,false);
         return;
     }
@@ -581,10 +658,15 @@ extern "C" __attribute__((used)) void BotwCraftPlayerTick() {
     // the sequence has not changed: BOTW physics may republish transform.
     // The explicit 0x10 opt-in distinguishes active actuator from probing.
     if (!(p.flags & 0x10u)) {
+        s_muteLinkSLink=0;
         updateVisualModel(actor,false);
         g_BotwCraftLiveMailbox.runtime_state = kEngineUnavailable;
         return;
     }
+    // Audio filter is independent of render FPS and does not touch the
+    // BDP1/BDP2 transport. SoundLink audio gets filtered at source.
+    s_muteLinkSLink=1;
+    installLinkSoundMute();
     // Zelda must not simultaneously act on its ProController/analog stick:
     // Minecraft is authoritative. Capture is automatically released in two
     // frames if BotwCraft stops updating, so menus stay usable on disconnect.
