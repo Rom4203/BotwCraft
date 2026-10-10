@@ -1,0 +1,26 @@
+name: Build test20 Link-only SoundLink mute
+on:
+  push:
+    branches: [botw-test20-link-sound-mute]
+    paths:
+      - 'botw/wxlm/**'
+      - '.github/workflows/botw-test20-link-sound-build.yml'
+  workflow_dispatch:
+jobs:
+  native:
+    runs-on: ubuntu-latest
+    container: devkitpro/devkita64:latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch same WiiXLaunch Switch SDK
+        run: git clone --depth=1 https://github.com/BladesawStudios/WiiXLaunch.git vendor/WiiXLaunch
+      - name: Build Link selective audio module
+        run: |
+          python3 vendor/WiiXLaunch/sdk/scripts/build_mod.py --source botw/wxlm \
+            --target switch --wiixlaunch vendor/WiiXLaunch/sdk --out build-native
+          test -s build-native/switch-mods/bwc_pose.wxlm
+      - uses: actions/upload-artifact@v4
+        with:
+          name: botwcraft-test20-link-audio-mute-wxlm
+          path: build-native/switch-mods/bwc_pose.wxlm
+          if-no-files-found: error
