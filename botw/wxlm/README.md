@@ -1,16 +1,58 @@
-# BotwCraft WiiXLaunch native module
+# BotwCraft NX150 — native actor and first-person camera
 
-This is the start of a standalone WiiXLaunch SDK module for BOTW Switch 1.5.0. It registers a **real guest player-tick callback** through the `botw.player` surface and owns a BDP1 mailbox in its guest BSS.
+This folder contains the standalone `bwc_pose.wxlm` AArch64 module,
+compiled by `.github/workflows/botw-native-switch.yml`.
+It runs alongside the original `botwcraft.wxlm`/subsdk9.
 
-**IMPORTANT: This does not move Link or change the camera yet.** The source intentionally logs that the required transform hook is not installed. Do not replace the existing `botwcraft.wxlm` in your game with this experiment.
+## What is implemented
 
-Build against https://github.com/BladesawStudios/WiiXLaunch/sdk using its `build_mod.py` and devkitA64. The build script in this directory is a convenience wrapper.
+1. WiiXLaunch `botw.player` player-tick and module-owned BDP1 mailbox.
+   The guest writes an acknowledgment proving that the actual game frame
+   consumes the Minecraft-authoritative input.
+2. Link placement through the public `botw.actor` `SetMtx` / `WarpTo`
+   interfaces, with an experimental NX150 actor-virtual fallback if they
+   return unsupported. The fallback checks the player actor's **NX150
+   `+0x398` matrix** against real Link telemetry before calling virtual
+   `setMtx` (#85). It uses the Wii U setMtx ABI as a hypothesis, **not
+   a verified Switch callable signature**.
+3. Model-only hiding by shrinking `gsys::Model` scale at `+0x88`
+   (actor's model pointer is NX150 `+0x4E0`) and restoring on disarm.
+4. NX150 native camera hook at `sead::LookAtCamera::doUpdateMatrix`
+   (module-relative `0x00B1BE7C`). The actual address comes from
+   `wiixl.call.ResolveTarget`, **not** `wiixl.core.ImageBase()`,
+   which is zero on Switch. It applies Minecraft eye and forward to Zelda's
+   active `LookAtCamera` before Zelda computes the final view matrix.
+   The hook filters out cameras far away from Link.
+5. Guest result codes accessible from Windows Rust bridge:
+   `state=4` means not fully applied; `state=5` means Link transform
+   called; `state=6` means camera called; `state=7` means both were
+   called. `warp_method=3` is the NX150 vtable fallback.
 
-Required next native implementation:
-1. Bind `g_BotwCraftGameMailbox` address to the host producer (current Python producer still writes into a *different* subsdk9 BDP1 buffer); validate guest memory mapping and synchronization.
-2. Capture an actual Link actor pointer via `botw.player`; trace BOTW Switch 1.5.0 character-controller transform setter in native game code. Do not assume Wii U vtable offsets or treat cached position fields as setters.
-3. Locate the active `LookAtCamera` pointer during game camera update and call camera setter *after* game update.
-4. Mask Link rendering and bypass local physics updates while Minecraft is authoritative. Restore on disconnect.
-5. Retain the Rust compositor and Minecraft bridge; evolve collisions only after no-collision movement is verified.
+## Build
 
-The Python host packet layout is `<4I2Q18f2I` / 112 bytes. This file's `Pose` matches that layout. Multiple copies of an unrelated BDP1 marker in Ryujinx memory **do not prove** a guest module is receiving data.
+Use WiiXLaunch's Switch SDK with devkitPro devkitA64:
+
+```
+python3 sdk/scripts/build_mod.py --source botw/wxlm --target switch --wiixlaunch sdk
+```
+
+The official GitHub Actions job builds and publishes the binary automatically.
+The Windows Rust test overlay is built in the dependent CI packaging job.
+
+## Runtime limitations
+
+**Successful compilation does not establish playability.** The virtual
+`setMtx` ABI, camera hook and model scaling have NOT been tested against
+a real Ryujinx BOTW 1.5.0 session. This module may crash the game; back up
+the Zelda save, and test only in a disposable session.
+
+For now, Zelda collisions are not fed back into Minecraft. Minecraft
+positions remain authoritative and the actor transform is reapplied on
+each guest player tick, to keep a creative-mode flight test possible even
+without collision integration.
+
+Sources for NX150 layout and function addresses:
+- https://github.com/zeldaret/botw/blob/master/src/KingSystem/ActorSystem/actActor.h
+- https://github.com/zeldaret/botw/blob/master/lib/gsys/include/gsys/gsysModel.h
+- https://github.com/zeldaret/botw/blob/master/data/uking_functions.csv
+- https://github.com/BladesawStudios/WiiXLaunch/tree/main/sdk
