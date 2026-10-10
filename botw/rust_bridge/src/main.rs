@@ -3,7 +3,7 @@ mod shared;
 #[cfg(target_os="windows")]
 mod engine;
 #[cfg(target_os="windows")]
-mod ryujinx;
+mod guest_gdb;
 
 #[cfg(target_os="windows")]
 fn main(){
@@ -45,7 +45,7 @@ fn main(){
   let state:State=Arc::new(Mutex::new(engine::Engine::new()?));
   let sender=Arc::clone(&state);
   thread::Builder::new().name("botwcraft-wxlm-transport".into())
-    .spawn(move||ryujinx::transport_loop(sender))?;
+    .spawn(move||guest_gdb::transport_loop(sender))?;
   let ticker=Arc::clone(&state);
   thread::Builder::new().name("botwcraft-bdp1".into()).spawn(move||{
    loop{
@@ -58,7 +58,7 @@ fn main(){
   println!("[RUST_BRIDGE] Minecraft protocol compatible TCP 127.0.0.1:39847");
   println!("[RUST_BRIDGE] SkyCraft_v1 memory + authoritative Minecraft pose producer ready");
   println!("[RUST_BRIDGE] Input ring remains owned by Rust compositor");
-  println!("[RUST_BRIDGE] Ryujinx WXLM sender enabled; waits for LIVE guest ACK");
+  println!("[RUST_BRIDGE] Ryujinx GDB guest transport enabled; requires port 22225 and LIVE guest ACK");
   println!("[RUST_BRIDGE] BOTW engine actor/camera hooks still required for actual gameplay");
   for conn in server.incoming(){
    match conn {
