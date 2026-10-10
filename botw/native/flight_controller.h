@@ -8,12 +8,12 @@
 extern "C" {
 #endif
 
-/* Host-produced BDP1 record; little-endian and exactly 112 bytes. */
+/* Host-produced BDP1 pose record. Movement mode is intentionally NOT a prerequisite. */
 #define BWC_BDP1_MAGIC 0x31504442u
 #define BWC_BDP1_VERSION 1u
 #define BWC_FLIGHT_ACTIVE 1u
 #define BWC_FLIGHT_FPS 2u
-#define BWC_FLIGHT_FLY 4u
+#define BWC_FLIGHT_FLY 4u /* Informational only; walking etc. must also sync. */
 
 typedef struct {
     uint32_t sequence;
@@ -35,7 +35,7 @@ typedef struct {
 
 typedef struct {
     /* These must be bound to VERIFIED BOTW 1.5.0 engine entry points.
-       NULL callbacks cannot produce an active flight session. */
+       NULL callbacks cannot produce an active movement-sync session. */
     bool (*set_player_transform)(void *user, const float xyz[3], float yaw);
     bool (*set_camera_lookat)(void *user, const float eye[3], const float target[3]);
     bool (*set_player_visible)(void *user, bool visible);
