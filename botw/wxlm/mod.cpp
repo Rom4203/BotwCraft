@@ -191,38 +191,40 @@ static bool updateVisualModel(uint32_t handle, bool hide) {
 }
 
 static bool warpLink(uint32_t handle, const Pose& p) {
-    for (unsigned i = 0; i < 3; ++i)
-        if (!finiteFloat(p.position[i])) return false;
-    // The actual engine setMtx updates actor+renderer+physics in one call.
-    // Via the public surface, the host can refuse if unsupported on Switch.
-    auto setMtx = S::SetMtx;
-    auto getMtx = S::GetMatrix;
-    float mat[12] = {1.f,0.f,0.f,0.f,
-                     0.f,1.f,0.f,0.f,
-                     0.f,0.f,1.f,0.f};
-    if (getMtx) getMtx(handle, mat);
-    if (!finiteFloat(p.yaw)) return false;
-    const float angle = p.yaw * 0.01745329251994329577f;
-    const float sn = WiiXLaunch::ModMath::Sin(angle);
-    const float cs = WiiXLaunch::ModMath::Cos(angle);
-    // Y-up orientation: yaw 0 faces +Z, matching Minecraft.
-    mat[0] = cs; mat[2] = sn;
-    mat[8] = -sn; mat[10] = cs;
-    mat[3] = p.position[0];
-    mat[7] = p.position[1];
-    mat[11] = p.position[2];
-    if (setMtx && setMtx(handle, mat, 1u)) {
-        g_BotwCraftLiveMailbox.warp_method = 1;
+    if(!S::ActorUnsafeRawPointer)return false;
+    for(unsigned i=0;i<3;i++)if(!finiteFloat(p.position[i]))return false;
+    // The v3/v4 implementation rebuilt Link's Y-rotation from Minecraft yaw
+    // EVERY frame. BOTW animation and physics own actor rotation; that caused
+    // Link to spin, side-step, and glide as Zelda continuously reconciled its
+    // movement controller with a foreign rotation.
+    //
+    // Physics/translation authority comes from Minecraft. Rotation remains
+    // unchanged. First-person yaw/pitch belong ONLY to LookAtCamera.
+    const uintptr_t raw=S::ActorUnsafeRawPointer(handle);
+    if (raw<0x10000u || (raw&7u))return false;
+    const volatile float* liveMtx=
+        reinterpret_cast<const volatile float*>(raw+0x398);
+    float mtx[12]={};
+    for(unsigned i=0;i<12;i++){
+        const float component=liveMtx[i];
+        if(!finiteFloat(component))return false;
+        mtx[i]=component;
+    }
+    mtx[3]=p.position[0];
+    mtx[7]=p.position[1];
+    mtx[11]=p.position[2];
+    if(S::SetMtx && S::SetMtx(handle,mtx,1u)){
+        g_BotwCraftLiveMailbox.warp_method=1;
         return true;
     }
-    auto warp = S::WarpTo;
-    if (warp && warp(handle,p.position[0],p.position[1],p.position[2])) {
-        g_BotwCraftLiveMailbox.warp_method = 2;
+    if(S::WarpTo && S::WarpTo(handle,p.position[0],p.position[1],p.position[2])){
+        g_BotwCraftLiveMailbox.warp_method=2;
         return true;
     }
-    // The public actor API is not implemented on Switch; fall back to the
-    // NX150 in-game actor vtable, guarded by live position/matrix validation.
-    return rawSwitchSetMtx(handle,mat,p);
+    // Neither public function is Switch-capable in the current upstream
+    // surface; preserve the live actor's rotation in the guarded NX150
+    // setMtx vtable path as well.
+    return rawSwitchSetMtx(handle,mtx,p);
 }
 
 // Direct Switch LookAtCamera writer. The public botw.camera surface filters
@@ -422,9 +424,11 @@ extern "C" __attribute__((used)) void BotwCraftPlayerTick() {
         return;
     }
     const bool warped = warpLink(actor,p);
-    const bool hidden = warped && updateVisualModel(actor,true);
-    (void)hidden;
     const bool camera = updateCameraFromGame(p);
+    // Hiding Link should not depend on whether movement was accepted.
+    // Hide the render mesh only after the actual camera is in FPS mode;
+    // retain Link's physics/actor and restore visibility on disarm.
+    if (camera) updateVisualModel(actor,true);
     g_BotwCraftLiveMailbox.runtime_state =
         warped && camera ? kWarpAndCameraOK : warped ? kWarpOK :
         camera ? kCameraOK : kEngineUnavailable;
