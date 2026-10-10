@@ -84,7 +84,8 @@ impl Engine{
   if let Some(m)=mc{
    if m.flags&INPUTS==0{
     self.reset_anchor();
-   }else if (m.flags&(ACTIVE|INPUTS|FPS_GUI))==(ACTIVE|INPUTS|FPS_GUI){
+   }else // Third Rust gameplay window holds focus; Minecraft client FPS GUI may be off.
+   if (m.flags&(ACTIVE|INPUTS))==(ACTIVE|INPUTS){
     if let Some(p)=game{
      if self.mc_anchor.is_none(){
       self.mc_anchor=Some(m.pos);self.botw_anchor=Some(p);
