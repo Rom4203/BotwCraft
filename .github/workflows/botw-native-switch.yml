@@ -24,5 +24,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: botwcraft-direct-switch-experimental
-          path: build-native/switch-mods/botwcraft_direct.wxlm
+          path: build-native/switch-mods/bwc_pose.wxlm
           if-no-files-found: error
