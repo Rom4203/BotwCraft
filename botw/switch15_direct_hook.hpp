@@ -156,7 +156,7 @@ inline void Poll(void* player, const float current[3]) {
     }
     const auto info = exl::util::GetMainModuleInfo();
     const uintptr_t textLo = info.m_Text.m_Start;
-    const uintptr_t textHi = info.m_Text.m_End;
+    const uintptr_t textHi = info.m_Text.GetEnd();
     if (!TryApplyActor(player,packet.position,packet.yaw,textLo,textHi)) {
         ++gRefused;
         if ((gRefused % 60)==1)
