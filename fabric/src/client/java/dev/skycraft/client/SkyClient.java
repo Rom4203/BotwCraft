@@ -84,7 +84,12 @@ public final class SkyClient {
         float partial = minecraft.getDeltaTracker().getGameTimeDeltaPartialTick(false);
         Vec3 feet = player.getPosition(partial);
 
-        mcState.flags = Proto.MC_IN_WORLD | (minecraft.gui.screen() == null ? 0x10000 : 0);
+        // High bits are BotwCraft-only, unused by SkyCraft original:
+        // 0x10000 = world gameplay without GUI; 0x20000 = Rust input opt-in.
+        // The Rust app only grabs the pointer if BOTH are true.
+        mcState.flags = Proto.MC_IN_WORLD
+            | (minecraft.gui.screen() == null ? 0x10000 : 0)
+            | (BotwCraftSession.compositorInputs() ? 0x20000 : 0);
         mcState.x = feet.x;
         mcState.y = feet.y;
         mcState.z = feet.z;
