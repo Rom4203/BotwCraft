@@ -7,6 +7,7 @@
 #include <wiixlaunch/imports/botw_player.h>
 #include <wiixlaunch/imports/botw_actor.h>
 #include <wiixlaunch/imports/botw_camera.h>
+#include <wiixlaunch/imports/botw_input.h>
 #include <wiixlaunch/imports/wiixl_call.h>
 #include <wiixlaunch/mod_math.h>
 
@@ -26,6 +27,11 @@ WXL_USE_botw_actor(GetMatrix);
 WXL_USE_botw_camera(SetPosition);
 WXL_USE_botw_camera(SetLookAt);
 WXL_USE_botw_camera(SetUp);
+}
+namespace Inputs {
+WXL_USE_botw_input(Init);
+WXL_USE_botw_input(HoldInputCapture);
+WXL_USE_botw_input(IsInputCaptured);
 }
 
 struct Pose {
@@ -91,6 +97,8 @@ static bool s_loggedPose = false;
 static bool s_loggedTimeout = false;
 static bool s_loggedWarp = false;
 static bool s_loggedCamera = false;
+static bool s_inputInit=false;
+static bool s_loggedInputCapture=false;
 static bool s_confirmedActorLayout = false;
 static uintptr_t s_confirmedActor = 0;
 
@@ -429,6 +437,19 @@ extern "C" __attribute__((used)) void BotwCraftPlayerTick() {
         updateVisualModel(actor,false);
         g_BotwCraftLiveMailbox.runtime_state = kEngineUnavailable;
         return;
+    }
+    // Zelda must not simultaneously act on its ProController/analog stick:
+    // Minecraft is authoritative. Capture is automatically released in two
+    // frames if BotwCraft stops updating, so menus stay usable on disconnect.
+    if (!s_inputInit && Inputs::Init) {
+        s_inputInit=Inputs::Init()!=0;
+    }
+    if(s_inputInit && Inputs::HoldInputCapture){
+        Inputs::HoldInputCapture(2u);
+        if(!s_loggedInputCapture && Inputs::IsInputCaptured && Inputs::IsInputCaptured()){
+            s_loggedInputCapture=true;
+            S::Log("[BOTW_NATIVE] ZELDA_CONTROLLER_INPUT_CAPTURED");
+        }
     }
     const bool warped = warpLink(actor,p);
     const bool camera = updateCameraFromGame(p);
