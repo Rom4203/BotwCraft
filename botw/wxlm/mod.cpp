@@ -72,6 +72,11 @@ struct alignas(16) Mailbox {
     volatile float player_xyz[3];
     volatile uint32_t camera_matrix_frames;
     volatile uint32_t link_render_hidden;
+    // BDP2 live double buffer: one 112-byte GDB write to the inactive
+    // slot, then one atomic 4-byte publish. Never read a half packet.
+    // selector: 0=legacy probe, 1=fast[0], 2=fast[1].
+    volatile uint32_t fast_slot;
+    volatile Pose fast[2];
 };
 static_assert(offsetof(Mailbox, packet) == 40);
 static_assert(offsetof(Mailbox, acknowledged_seq) == 152);
@@ -80,12 +85,15 @@ static_assert(offsetof(Mailbox, player_valid) == 180, "Live Link validity ABI dr
 static_assert(offsetof(Mailbox, player_xyz) == 184, "Live Link position ABI drift");
 static_assert(offsetof(Mailbox, camera_matrix_frames) == 196, "FPS camera matrix status drift");
 static_assert(offsetof(Mailbox, link_render_hidden) == 200, "Link visibility status drift");
+static_assert(offsetof(Mailbox, fast_slot) == 204, "BDP2 selector ABI drift");
+static_assert(offsetof(Mailbox, fast) == 208, "BDP2 slots ABI drift");
+static_assert(offsetof(Mailbox, fast[1]) == 320, "BDP2 second slot ABI drift");
 
 extern "C" {
 // Marker must remain in the actual guest .data of this wxlm module.
 // Never conflate it with the unrelated BDP1 symbol in subsdk9.
 __attribute__((used, aligned(16))) Mailbox g_BotwCraftLiveMailbox = {
-    "BOTWCRAFT_WXLM_BDP1_LIVE_20261010", {}, 0, kModuleReady, 0, 0, 0, 0, 0, {0,0,0}, 0, 0
+    "BOTWCRAFT_WXLM_BDP1_LIVE_20261010", {}, 0, kModuleReady, 0, 0, 0, 0, 0, {0,0,0}, 0, 0, 0, {}
 };
 }
 
@@ -350,16 +358,30 @@ static bool updateCameraFromGame(const Pose& p) {
            s_ticks-s_lastMatrixTick<=3u;
 }
 
+// Published slot pointer is atomically changed *after* the entire inactive
+// pose is written by Rust. Do not read the legacy GDB seqlock during fast mode.
+static bool readPoseBytes(Pose& out, const volatile Pose& src) {
+    const volatile uint8_t* from =
+        reinterpret_cast<const volatile uint8_t*>(&src);
+    uint8_t* dest=reinterpret_cast<uint8_t*>(&out);
+    for (unsigned i=0;i<sizeof(Pose);++i) dest[i]=from[i];
+    return !(out.seq&1u) && out.magic==kMagic && out.version==1;
+}
 static bool readPacket(Pose& out) {
-    const volatile uint8_t* input =
-        reinterpret_cast<const volatile uint8_t*>(&g_BotwCraftLiveMailbox.packet);
-    uint8_t* output = reinterpret_cast<uint8_t*>(&out);
-    for (unsigned attempt = 0; attempt < 8; ++attempt) {
-        const uint32_t before = g_BotwCraftLiveMailbox.packet.seq;
-        if (before & 1u) continue;
-        for (unsigned i = 0; i < sizeof(Pose); ++i) output[i] = input[i];
-        const uint32_t after = g_BotwCraftLiveMailbox.packet.seq;
-        if (after == before && !(after & 1u) && out.seq == after) return true;
+    for(unsigned attempt=0;attempt<6;attempt++){
+        const uint32_t selected=g_BotwCraftLiveMailbox.fast_slot;
+        if(selected==1u || selected==2u){
+            if (!readPoseBytes(out,g_BotwCraftLiveMailbox.fast[selected-1u]))
+                continue;
+            if (g_BotwCraftLiveMailbox.fast_slot==selected) return true;
+        }else if(selected==0u){
+            const uint32_t before=g_BotwCraftLiveMailbox.packet.seq;
+            if(before&1u)continue;
+            if(!readPoseBytes(out,g_BotwCraftLiveMailbox.packet))continue;
+            const uint32_t after=g_BotwCraftLiveMailbox.packet.seq;
+            if(before==after && !(after&1u) && out.seq==after &&
+                g_BotwCraftLiveMailbox.fast_slot==0u) return true;
+        }else return false;
     }
     return false;
 }
