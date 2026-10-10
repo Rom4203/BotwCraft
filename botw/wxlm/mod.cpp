@@ -167,48 +167,85 @@ static bool rawSwitchSetMtx(uint32_t handle, const float matrix[12],
     return true;
 }
 
-// zeldaret/botw NX150 Actor::mModel +0x4E0, gsys::Model::_88 render scale.
-// This reduces ONLY the model render scale: Link's actor/physics stay alive.
-static uintptr_t s_hiddenModel = 0;
-static uintptr_t s_hiddenActor = 0;
-static float s_previousScale[3] = {1.f,1.f,1.f};
-static bool s_modelWasHidden = false;
-static bool s_loggedModelHide = false;
+// NX150 Link rendering is driven by TWO scales, not by `gsys::Model::_88` alone:
+//   Actor::mScale       at Actor +0x418  (root actor -> model input)
+//   gsys::Model::_88    at Model +0x88   (cached draw/model scale)
+// The previous V7 touched only Model::_88; animation updated the actor's
+// root scale afterwards, so Link remained visible inside the FPS camera.
+// Hide both while keeping the actor and controller allocated and active.
+static uintptr_t s_hiddenModel=0;
+static uintptr_t s_hiddenActor=0;
+static float s_previousScale[3]={1.f,1.f,1.f};
+static float s_previousActorScale[3]={1.f,1.f,1.f};
+static bool s_modelWasHidden=false;
+static bool s_actorWasHidden=false;
+static bool s_loggedModelHide=false;
+static uint32_t s_activeActorHandle=0;
+static constexpr float kHiddenDrawScale=0.00001f;
 
-static bool updateVisualModel(uint32_t handle, bool hide) {
-    if (!S::ActorUnsafeRawPointer) return false;
+static bool updateVisualModel(uint32_t handle,bool hide){
+    if(!S::ActorUnsafeRawPointer)return false;
     const uintptr_t actor=S::ActorUnsafeRawPointer(handle);
-    if (actor<0x10000 || (actor&7u)) return false;
+    if(actor<0x10000u || (actor&7u))return false;
     const uintptr_t model=*reinterpret_cast<const volatile uintptr_t*>(actor+0x4e0);
-    if (!model || (model&7u) || model<0x10000) return false;
-    volatile float* scale=reinterpret_cast<volatile float*>(model+0x88);
-    if (!hide) {
-        g_BotwCraftLiveMailbox.link_render_hidden=0;
-        if (s_modelWasHidden && s_hiddenModel==model &&
-            s_hiddenActor==actor) {
-            for (unsigned i=0;i<3;i++) scale[i]=s_previousScale[i];
+    volatile float* actorScale=reinterpret_cast<volatile float*>(actor+0x418);
+    volatile float* modelScale=(model>=0x10000u && !(model&7u))
+        ? reinterpret_cast<volatile float*>(model+0x88) : nullptr;
+    if(!hide){
+        if(s_actorWasHidden && s_hiddenActor==actor){
+            for(unsigned i=0;i<3;i++)actorScale[i]=s_previousActorScale[i];
         }
+        if(s_modelWasHidden && s_hiddenActor==actor &&
+           modelScale && s_hiddenModel==model){
+            for(unsigned i=0;i<3;i++)modelScale[i]=s_previousScale[i];
+        }
+        g_BotwCraftLiveMailbox.link_render_hidden=0;
         s_modelWasHidden=false;
+        s_actorWasHidden=false;
         s_hiddenModel=0;
         s_hiddenActor=0;
         return true;
     }
-    if (!s_modelWasHidden || s_hiddenModel!=model || s_hiddenActor!=actor) {
-        const float old[]={scale[0],scale[1],scale[2]};
-        for (unsigned i=0;i<3;i++)
-            if (!finiteFloat(old[i]) || old[i]<0.00001f || old[i]>100.f)
-                return false;
-        s_hiddenModel=model;
+    // If Link respawns, NEVER dereference an old freed pointer. Only
+    // snapshot and hide the current validated actor.
+    if(s_hiddenActor!=actor){
+        s_actorWasHidden=false;
+        s_modelWasHidden=false;
         s_hiddenActor=actor;
-        for (unsigned i=0;i<3;i++) s_previousScale[i]=old[i];
-        s_modelWasHidden=true;
+        s_hiddenModel=0;
     }
-    // Nonzero scale avoids singular render matrices while making Link invisible.
-    for (unsigned i=0;i<3;i++) scale[i]=0.0001f;
-    g_BotwCraftLiveMailbox.link_render_hidden=1;
-    if (!s_loggedModelHide) {
+    if(!s_actorWasHidden){
+        float old[3]={actorScale[0],actorScale[1],actorScale[2]};
+        for(unsigned i=0;i<3;i++){
+            if(!finiteFloat(old[i]) || old[i]<0.00001f || old[i]>100.f)
+                return false;
+            s_previousActorScale[i]=old[i];
+        }
+        s_actorWasHidden=true;
+    }
+    if(modelScale && (!s_modelWasHidden || s_hiddenModel!=model)){
+        float old[3]={modelScale[0],modelScale[1],modelScale[2]};
+        bool valid=true;
+        for(unsigned i=0;i<3;i++){
+            if(!finiteFloat(old[i]) || old[i]<0.00001f || old[i]>100.f)
+                valid=false;
+        }
+        if(valid){
+            for(unsigned i=0;i<3;i++)s_previousScale[i]=old[i];
+            s_hiddenModel=model;
+            s_modelWasHidden=true;
+        }
+    }
+    // Reapply every player tick, because normal animation/actor visual
+    // updates may overwrite either cached value.
+    for(unsigned i=0;i<3;i++)actorScale[i]=kHiddenDrawScale;
+    if(modelScale && s_modelWasHidden && s_hiddenModel==model)
+        for(unsigned i=0;i<3;i++)modelScale[i]=kHiddenDrawScale;
+    g_BotwCraftLiveMailbox.link_render_hidden=
+        s_modelWasHidden ? 2u : 1u;
+    if(!s_loggedModelHide){
+        S::Log("[BOTW_NATIVE] LINK_RENDER_ROOT_AND_MODEL_SCALE_SUPPRESSED");
         s_loggedModelHide=true;
-        S::Log("[BOTW_NATIVE] Link model scale suppressed (actor retained)");
     }
     return true;
 }
@@ -317,6 +354,11 @@ extern "C" __attribute__((used)) void BotwCraftFirstPersonMatrix(
             }
         }
     }
+    // Late reapplication: actor animation may have rebuilt its render-scale
+    // before the camera matrix pass. Do not change Link's location here.
+    if (s_activeActorHandle && s_lastFpsTick &&
+        s_ticks>=s_lastFpsTick && s_ticks-s_lastFpsTick<=3u)
+        updateVisualModel(s_activeActorHandle,true);
     if (s_cameraMatrixOriginal)
         s_cameraMatrixOriginal(camera,outputMatrix);
 }
@@ -505,6 +547,7 @@ extern "C" __attribute__((used)) void BotwCraftPlayerTick() {
             S::Log("[BOTW_NATIVE] ZELDA_CONTROLLER_INPUT_CAPTURED");
         }
     }
+    s_activeActorHandle=actor;
     const bool warped = warpLink(actor,p);
     const bool camera = updateCameraFromGame(p);
     // Link's renderer is not needed for first-person BotwCraft. Do NOT
