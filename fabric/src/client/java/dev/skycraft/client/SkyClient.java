@@ -38,9 +38,12 @@ public final class SkyClient {
         return false;
     }
 
-    /** Leave SDL keyboard/mouse capture to Minecraft, not Skyrim. */
+    /** SkyCraft virtual input only during explicit 3rd-window control.
+     * Prevent SDL mouse grab in the background Minecraft window, while
+     * routing compositor keys through the actual Fabric input handlers.
+     */
     public static boolean tookOver() {
-        return false;
+        return BotwCraftSession.compositorInputs();
     }
 
     public static SkyLink.SkyState sky() {
@@ -81,7 +84,7 @@ public final class SkyClient {
         float partial = minecraft.getDeltaTracker().getGameTimeDeltaPartialTick(false);
         Vec3 feet = player.getPosition(partial);
 
-        mcState.flags = Proto.MC_IN_WORLD;
+        mcState.flags = Proto.MC_IN_WORLD | (minecraft.gui.screen() == null ? 0x10000 : 0);
         mcState.x = feet.x;
         mcState.y = feet.y;
         mcState.z = feet.z;
