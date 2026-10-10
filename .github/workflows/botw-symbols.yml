@@ -1,0 +1,21 @@
+name: Resolve BOTW camera symbols
+on:
+  push:
+    branches: [botw-native-creative-flight]
+    paths:
+      - '.github/workflows/botw-symbols.yml'
+  workflow_dispatch:
+jobs:
+  symbols:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Examine BOTW NX150 named camera functions
+        shell: python
+        run: |
+          import urllib.request, re
+          url="https://raw.githubusercontent.com/zeldaret/botw/master/data/uking_functions.csv"
+          s=urllib.request.urlopen(url,timeout=30).read().decode('utf-8')
+          lines=[line for line in s.splitlines() if
+                 re.search(r'CameraMgr|getLookAtCamera|LookAtCamera|Camera::|CameraManager|CameraState',line,re.I)]
+          print("CAMERA_SYMBOL_MATCHES",len(lines))
+          for line in lines[:150]: print(line[:450])
