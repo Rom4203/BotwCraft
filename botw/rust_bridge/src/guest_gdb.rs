@@ -198,7 +198,7 @@ pub fn transport_loop(state:Arc<Mutex<Engine>>){
    loop{
     // Player XYZ is sampled every 100ms, NOT at every transmitted Minecraft
     // frame. That avoids a 4th GDB roundtrip on the critical camera path.
-    if last_read.elapsed()>=Duration::from_millis(100){
+    if last_read.elapsed()>=Duration::from_millis(250){
       if let Some((tick,pos))=read_link(&mut remote,addr)?{
        if tick!=last_guest_tick{
         last_guest_tick=tick;
@@ -233,7 +233,7 @@ pub fn transport_loop(state:Arc<Mutex<Engine>>){
       }
       let change=last_pose.as_ref().is_none_or(|p|materially_changed(p,&pose));
       // Keepalive even while still, so native stale detection can disarm.
-      let refresh=last_tx.elapsed()>=Duration::from_millis(300);
+      let refresh=last_tx.elapsed()>=Duration::from_millis(250);
       if change || refresh{
        let started=Instant::now();
        publish_fast(&mut remote,addr,&pose,&mut selected)?;
@@ -261,14 +261,14 @@ pub fn transport_loop(state:Arc<Mutex<Engine>>){
          u32::from_le_bytes(status[4..8].try_into().unwrap()))
       }else{(0,0)};
       let mean=if latency_count>0{latency_sum/latency_count as u128}else{0};
-      println!("[RUST_LINK] LinkTick={} FPS_MATRIX_FRAMES={} LINK_HIDDEN={} active={} BDP3_rtt_us={} samples={} still_refresh=300ms",
+      println!("[RUST_LINK] LinkTick={} FPS_MATRIX_FRAMES={} LINK_HIDDEN={} active={} BDP3_rtt_us={} samples={} still_refresh=250ms",
          last_guest_tick,fps,hidden,armed,mean,latency_count);
       latency_sum=0;latency_count=0;
       last_report=Instant::now();
     }
     // The stream uses the most recent Minecraft pose, never a queue of
     // past frames. 2ms poll is low overhead; GDB requests self-throttle.
-    thread::sleep(Duration::from_millis(if armed{2}else{60}));
+    thread::sleep(Duration::from_millis(if armed{1}else{30}));
    }
   })();
   eprintln!("[RUST_LINK] Guest transport paused: {}",result.unwrap_err());
