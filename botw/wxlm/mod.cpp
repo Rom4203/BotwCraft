@@ -182,6 +182,54 @@ static bool s_actorWasHidden=false;
 static bool s_loggedModelHide=false;
 static uint32_t s_activeActorHandle=0;
 static constexpr float kHiddenDrawScale=0.00001f;
+struct HiddenUnit {
+    uintptr_t pointer;
+    uint16_t old_mask;
+};
+static HiddenUnit s_hiddenUnits[32]={};
+static unsigned s_hiddenUnitCount=0;
+
+// NX150 gsys::Model::mUnitAccess is a sead::PtrArray<ModelInfo> at +0x38:
+// {int32 size, int32 capacity, ModelInfo** data}.
+// Each ModelInfo::mModelUnit is at +0x0.
+// gsys::ModelUnit::mVisibilityMask is u16 at +0x0c.
+// Setting it to zero suppresses ALL model render views, unlike Model::_88
+// scale that was overridden by animation and left Link's head visible.
+static unsigned suppressRenderUnits(uintptr_t model,bool hide) {
+    if(model<0x10000u || (model&7u))return 0;
+    const volatile uint8_t* header=reinterpret_cast<const volatile uint8_t*>(model+0x38u);
+    const int32_t num=*reinterpret_cast<const volatile int32_t*>(header);
+    const int32_t cap=*reinterpret_cast<const volatile int32_t*>(header+4u);
+    if(num<0 || num>32 || cap<num || cap>512)return 0;
+    const uintptr_t list=*reinterpret_cast<const volatile uintptr_t*>(header+8u);
+    if(num==0 || list<0x10000u || (list&7u))return 0;
+    unsigned hidden=0;
+    for(int i=0;i<num;i++){
+        const uintptr_t info=reinterpret_cast<const volatile uintptr_t*>(list)[i];
+        if(info<0x10000u || (info&7u))continue;
+        const uintptr_t unit=*reinterpret_cast<const volatile uintptr_t*>(info);
+        if(unit<0x10000u || (unit&7u))continue;
+        volatile uint16_t* mask=reinterpret_cast<volatile uint16_t*>(unit+0x0cu);
+        unsigned saved=0;
+        for(;saved<s_hiddenUnitCount;saved++)
+            if(s_hiddenUnits[saved].pointer==unit)break;
+        if(hide){
+            if(saved==s_hiddenUnitCount && s_hiddenUnitCount<32){
+                s_hiddenUnits[s_hiddenUnitCount++]={unit,*mask};
+            }
+            *mask=0;
+            ++hidden;
+        }else if(saved<s_hiddenUnitCount){
+            // Restore only while the unit is STILL present in this model's
+            // live unit list; never dereference a model freed on respawn.
+            *mask=s_hiddenUnits[saved].old_mask;
+            ++hidden;
+        }
+    }
+    if(!hide)s_hiddenUnitCount=0;
+    return hidden;
+}
+
 
 static bool updateVisualModel(uint32_t handle,bool hide){
     if(!S::ActorUnsafeRawPointer)return false;
@@ -204,6 +252,7 @@ static bool updateVisualModel(uint32_t handle,bool hide){
         s_actorWasHidden=false;
         s_hiddenModel=0;
         s_hiddenActor=0;
+        if(modelScale)suppressRenderUnits(model,false);
         return true;
     }
     // If Link respawns, NEVER dereference an old freed pointer. Only
@@ -213,6 +262,7 @@ static bool updateVisualModel(uint32_t handle,bool hide){
         s_modelWasHidden=false;
         s_hiddenActor=actor;
         s_hiddenModel=0;
+        s_hiddenUnitCount=0; // Old actor may have been freed.
     }
     if(!s_actorWasHidden){
         float old[3]={actorScale[0],actorScale[1],actorScale[2]};
@@ -241,8 +291,9 @@ static bool updateVisualModel(uint32_t handle,bool hide){
     for(unsigned i=0;i<3;i++)actorScale[i]=kHiddenDrawScale;
     if(modelScale && s_modelWasHidden && s_hiddenModel==model)
         for(unsigned i=0;i<3;i++)modelScale[i]=kHiddenDrawScale;
+    const unsigned units=suppressRenderUnits(model,true);
     g_BotwCraftLiveMailbox.link_render_hidden=
-        s_modelWasHidden ? 2u : 1u;
+        units>0 ? 3u : (s_modelWasHidden ? 2u : 1u);
     if(!s_loggedModelHide){
         S::Log("[BOTW_NATIVE] LINK_RENDER_ROOT_AND_MODEL_SCALE_SUPPRESSED");
         s_loggedModelHide=true;
