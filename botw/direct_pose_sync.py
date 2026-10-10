@@ -35,7 +35,8 @@ MC_FLY=1<<7
 HEADER=struct.Struct("<4I2Q18f2I")
 assert HEADER.size == 112
 MAX_DELTA=128.0
-MAX_STALE_MS=350
+MAX_STALE_MS=1000
+MAX_MC_STALE_MS=1000
 
 @dataclass(frozen=True)
 class Pose:
@@ -59,7 +60,11 @@ class Target:
     fly: bool
 
 
-def get_minecraft(memory):
+def get_minecraft(memory,now_ms=None):
+    if now_ms is not None:
+        beat=struct.unpack_from('<Q',memory,0x18)[0]
+        if not beat or not 0<=now_ms-beat<=MAX_MC_STALE_MS:
+            return None
     for _ in range(4):
         a=struct.unpack_from("<I",memory,host.OFF_MC_STATE)[0]
         if a&1: continue
@@ -109,8 +114,19 @@ class Align:
         self.last=None
 
     def target(self,mc,link):
-        if not ready(mc) or link is None:
+        # A transient missing game heartbeat or an opened menu must NEVER
+        # reset the position anchor: re-anchoring to a physics-displaced Link
+        # would silently drift the origin each time a GUI appears.
+        if mc is None or link is None:
+            self.last=None
+            return None
+        # /botwcraft inputs off is explicit opt-out; the NEXT session uses
+        # a fresh anchor. An ordinary pause/menu retains the old anchor.
+        if not (mc.flags & INPUTS):
             self.reset()
+            return None
+        if not ready(mc):
+            self.last=None
             return None
         if self.mc_origin is None:
             self.mc_origin=mc.coords
@@ -192,7 +208,7 @@ def run(hz=60):
             while True:
                 t0=time.monotonic()
                 stamp=host.uptime_ms()
-                pose=get_minecraft(memory)
+                pose=get_minecraft(memory,stamp)
                 link=get_botw(memory,stamp)
                 target=alignment.target(pose,link)
                 seq=publish(memory,target,seq,stamp)
