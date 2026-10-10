@@ -1,0 +1,56 @@
+name: BotwCraft test20 compositor low-latency
+on:
+  push:
+    branches: [botw-test20-lowlatency-compositor]
+    paths:
+      - 'botw/lowlatency_payload.b64'
+      - '.github/workflows/botw-test20-lowlatency-compositor.yml'
+  workflow_dispatch:
+jobs:
+  windows-rust-compositor:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rehydrate exact user test20 compositor with targeted low-latency changes
+        shell: pwsh
+        run: |
+          python -m pip install --disable-pip-version-check brotli
+          @'
+          import pathlib,base64,hashlib,brotli
+          encoded=pathlib.Path('botw/lowlatency_payload.b64').read_text().strip()
+          assert len(encoded)==10664, 'Payload length mismatch'
+          compressed=base64.b64decode(encoded,validate=True)
+          assert hashlib.sha256(compressed).hexdigest()=='9e80fc9b7e885b6d1fd4385a6da2a7fce6cd6e535bd742749f45bf8fe348d940', 'Payload was corrupted'
+          data=brotli.decompress(compressed)
+          dest=pathlib.Path('new-compositor')
+          offset=0
+          files=[]
+          while offset<len(data):
+              path_len=int.from_bytes(data[offset:offset+2],'little');offset+=2
+              name=data[offset:offset+path_len].decode();offset+=path_len
+              length=int.from_bytes(data[offset:offset+4],'little');offset+=4
+              content=data[offset:offset+length];offset+=length
+              assert name in ['Cargo.toml','src/main.rs','src/capture.rs','src/hud.rs','src/viewport.rs'], name
+              path=dest/name;path.parent.mkdir(parents=True,exist_ok=True)
+              path.write_bytes(content)
+              files.append(name)
+          assert len(files)==5 and offset==len(data),files
+          print("Compiled compositor source recovered:",files)
+          '@ | python -
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: new-compositor
+      - name: Build and test Windows compositor
+        working-directory: new-compositor
+        shell: pwsh
+        run: |
+          cargo build --release
+          if ($LASTEXITCODE -ne 0) {exit $LASTEXITCODE}
+          if (-not (Test-Path target/release/botwcraft-compositor.exe)) {exit 2}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BotwCraft-Test20-Compositor-LowLatency-Windows
+          path: new-compositor/target/release/botwcraft-compositor.exe
+          if-no-files-found: error
