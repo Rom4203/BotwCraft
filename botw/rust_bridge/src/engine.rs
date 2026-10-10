@@ -8,6 +8,8 @@ const INPUTS:u32=0x20000;
 const FPS_GUI:u32=0x10000;
 const MC_FLY:u32=1<<7;
 const STALE:u64=1000;
+// Preserve the tested test20 1-FPS stall tolerance (no rapid disarm/rearm).
+const MC_STALE:u64=6000;
 const MAX_TELEPORT:f64=128.0;
 
 #[derive(Clone,Copy)]
@@ -30,7 +32,7 @@ impl Engine{
  }
  fn mc(&self,now:u64)->Option<McPose>{
   let beat=self.mem.u64(24);
-  if beat==0 || now<beat || now-beat>STALE{return None}
+  if beat==0 || now<beat || now-beat>MC_STALE{return None}
   for _ in 0..5 {
    let seq=self.mem.u32(MC);
    if seq&1!=0 {continue}
