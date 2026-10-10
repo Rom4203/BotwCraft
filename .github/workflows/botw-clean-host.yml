@@ -5,6 +5,7 @@ on:
     branches: [botw-native-creative-flight]
     paths:
       - '.github/workflows/botw-clean-host.yml'
+      - 'botw/patches/**'
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -25,6 +26,8 @@ jobs:
           path.write_text(s.replace(old, '// WIIXL_BOTW_DEMO intentionally disabled for BotwCraft release'))
           print('Disabled only WIIXL_BOTW_DEMO; NVN::Init is unchanged')
           PY
+      - name: Fix Ryujinx SD-mount boot abort in upstream WiiXLaunch
+        run: python3 botw/patches/guard_unmounted_sd.py wiix
       - name: Build Switch BOTW 1.5.0 host
         working-directory: wiix
         run: bash build_switch.sh
