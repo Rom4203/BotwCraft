@@ -204,8 +204,13 @@ pub fn transport_loop(state:Arc<Mutex<Engine>>){
       println!("[RUST_LINK] Player inactive; disarmed ONCE. GDB now read-only.");
     }
     if last_report.elapsed()>Duration::from_secs(5){
-      println!("[RUST_LINK] link_tick={} LinkTelemetry={} BDP1armed={} writes_active={} TX_age_ms={}",
-        last_guest_tick,native_live,armed,authenticated,last_tx.elapsed().as_millis());
+      let status=remote.read(addr+196,8).unwrap_or_default();
+      let (fps,hidden)=if status.len()==8{
+        (u32::from_le_bytes(status[0..4].try_into().unwrap()),
+         u32::from_le_bytes(status[4..8].try_into().unwrap()))
+      }else{(0,0)};
+      println!("[RUST_LINK] link_tick={} LinkTelemetry={} BDP1armed={} writes_active={} TX_age_ms={} FPS_MATRIX_FRAMES={} LINK_HIDDEN={}",
+        last_guest_tick,native_live,armed,authenticated,last_tx.elapsed().as_millis(),fps,hidden);
       last_report=Instant::now();
     }
     thread::sleep(Duration::from_millis(if armed {33}else{100}));
