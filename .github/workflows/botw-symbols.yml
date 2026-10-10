@@ -1,4 +1,4 @@
-name: Resolve BOTW camera symbols
+name: Investigate BOTW Havok raycast NX150 symbols
 on:
   push:
     branches: [botw-native-creative-flight]
@@ -9,13 +9,13 @@ jobs:
   symbols:
     runs-on: ubuntu-latest
     steps:
-      - name: Examine BOTW NX150 named camera functions
+      - name: Find native raycast ctor and synchronous query, resource-ground collision for Steve
         shell: python
         run: |
           import urllib.request, re
           url="https://raw.githubusercontent.com/zeldaret/botw/master/data/uking_functions.csv"
           s=urllib.request.urlopen(url,timeout=30).read().decode('utf-8')
           lines=[line for line in s.splitlines() if
-                 re.search(r'RigidBody::setContactNone|RigidBody::setLinearVelocity|gsys::Model::|Actor::setScale|PlayerInfo::|LookAtCamera::doUpdateMatrix',line,re.I)]
+                 re.search(r'ksys::phys::RayCast::(RayCast|worldRayCast|setStartAndEnd|setStart|setEnd|enableLayer|getHitPosition|getHitNormal|reset)|_ZN4ksys4phys7RayCast|RayCastForRequest|GroundHit',line,re.I)]
           print("BOTW_RENDER_PHYSICS_SYMBOL_MATCHES",len(lines))
           for line in lines[:170]: print(line[:450])
