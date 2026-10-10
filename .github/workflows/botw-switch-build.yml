@@ -10,6 +10,9 @@ on:
       - 'botw/guard_switch_player_hook.py'
       - 'botw/guard_switch_fs.py'
       - 'botw/guard_unknown_switch_build.py'
+      - 'botw/verify_native_heap.py'
+      - 'botw/native_hud_packet.hpp'
+      - 'botw/native_hud_bridge.py'
       - 'botw/native_guest_mesh.hpp'
       - 'botw/native_world_scene.hpp'
       - 'botw/world_space.py'
@@ -80,6 +83,8 @@ jobs:
                 --target switch \
                 --out ../botw/guest_mod/build
             '
+      - name: Verify compiled WiiXLaunch HUD heap request in real wxlm
+        run: python botw/verify_native_heap.py botw/guest_mod/build/switch-mods/botwcraft.wxlm botw/guest_mod/mod.json
       - name: Verify nonempty Nintendo-free mod artifacts
         run: |
           test -s WiiXLaunch/build/switch/subsdk9
