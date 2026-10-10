@@ -50,8 +50,7 @@ BwcFlightResult bwc_flight_tick(BwcFlightController *ctrl,
         bwc_flight_disarm(ctrl);
         return BWC_FLIGHT_BAD_PACKET;
     }
-    if (!(packet.flags & BWC_FLIGHT_ACTIVE) || !(packet.flags & BWC_FLIGHT_FPS) ||
-        !(packet.flags & BWC_FLIGHT_FLY)) {
+    if (!(packet.flags & BWC_FLIGHT_ACTIVE) || !(packet.flags & BWC_FLIGHT_FPS)) {
         bwc_flight_disarm(ctrl);
         return BWC_FLIGHT_DISARMED;
     }
@@ -80,7 +79,9 @@ BwcFlightResult bwc_flight_tick(BwcFlightController *ctrl,
     }
     float target[3];
     for (int i=0; i<3; ++i) target[i] = packet.eye[i] + packet.forward[i];
-    /* Only the verified native adapter can actually change the game.
+    /* Minecraft controls all movement modes (walking, falling, swimming, flying).
+       Collision integration is deliberately deferred: BOTW physics is disabled temporarily.
+       Only the verified native adapter can actually change the game.
        Never reinterpret process memory offsets as engine function pointers. */
     if (!h->set_player_physics_enabled(h->user, false) ||
         !h->set_player_transform(h->user, packet.position, packet.yaw) ||
