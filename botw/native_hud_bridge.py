@@ -86,6 +86,24 @@ def current_native_hud_mailbox(path):
     return pointer if 0x10000 <= pointer < (1 << 48) else None
 
 
+def hud_allocation_failure(path):
+    """Return True only for the current BOTW boot's actual WiiXLaunch failure.
+
+    Fail immediately instead of telling a user to reconnect Minecraft when
+    a 64 KiB guest module cannot allocate the required 36,896-byte HUD.
+    """
+    if path is None or not path.is_file() or time.time() - path.stat().st_mtime > 360:
+        return False
+    with path.open("rb") as handle:
+        handle.seek(max(0, path.stat().st_size - (8 << 20)))
+        data = handle.read().decode("utf-8", errors="replace")
+    builds = list(re.finditer(r"Game: build 0x[0-9a-fA-F]{8}", data))
+    if not builds or builds[-1].group(0) != gdb.VERSION:
+        return False
+    boot = data[builds[-1].start():]
+    return "BotwCraft:NATIVE_HUD_BUFFER_ALLOC_FAILED" in boot
+
+
 def run(port=22225, log=None):
     if sys.platform != "win32":
         raise RuntimeError("Windows/Ryujinx required")
@@ -97,6 +115,12 @@ def run(port=22225, log=None):
     for i in range(90):
         src = gdb.log_source(log)
         ptr = current_native_hud_mailbox(src)
+        if hud_allocation_failure(src):
+            raise RuntimeError(
+                "WiiXLaunch a refuse 36896 octets pour le HUD : ancien module "
+                "64 Ko. Installe le .wxlm avec heapRequest=131072 de ce "
+                "nouveau paquet, puis REDEMARRE Zelda entierement. "
+                "Minecraft et le port GDB ne sont pas la cause.")
         if ptr:
             print(f"[BotwCraft NVN HUD] Guest memory at 0x{ptr:x}", flush=True)
             break
