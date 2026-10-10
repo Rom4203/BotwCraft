@@ -6,6 +6,8 @@ on:
       - '.gitmodules'
       - 'WiiXLaunch'
       - 'botw/guest_mod/**'
+      - 'botw/native_direct_pose.hpp'
+      - 'botw/test_native_direct_pose.cpp'
       - 'botw/native_world_scene.hpp'
       - 'botw/test_native_world_scene.cpp'
       - 'botw/setup_wiixlaunch.py'
@@ -68,6 +70,11 @@ jobs:
           c++ -std=c++20 -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer -Wall -Wextra \
             -I botw botw/test_native_world_scene.cpp -o /tmp/botw-world-scene-test
           /tmp/botw-world-scene-test
+      - name: Verify native first-person direct transform ABI
+        run: |
+          c++ -std=c++20 -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer -Wall -Wextra \
+            -I botw botw/test_native_direct_pose.cpp -o /tmp/botw-direct-pose-test
+          /tmp/botw-direct-pose-test
       - name: Verify game-module source pin
         run: |
           test "$(git -C WiiXLaunch rev-parse HEAD)" = "30e0502ff2abb76b1816e8271d4126e0a95ac9fc"
