@@ -2,5 +2,6 @@
   "id": "botwcraft",
   "entry": "mod.cpp",
   "phase": "load",
-  "target": "switch"
+  "target": "switch",
+  "heapRequest": 131072
 }
