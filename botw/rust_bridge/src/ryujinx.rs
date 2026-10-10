@@ -173,6 +173,7 @@ pub fn transport_loop(state:std::sync::Arc<std::sync::Mutex<Engine>>){
    let mailbox=process.authenticated(&addresses)?;
    println!("[RUST_LINK] Confirmed live guest mailbox {mailbox:#x}; transport active");
    let mut last_seq=0u32;
+   let mut last_report=Instant::now()-Duration::from_secs(5);
    loop{
     let pkt={
      let e=state.lock().map_err(|_|failure("Rust bridge mutex poisoned"))?;
@@ -183,6 +184,21 @@ pub fn transport_loop(state:std::sync::Arc<std::sync::Mutex<Engine>>){
        u32::from_le_bytes(pkt[4..8].try_into().unwrap())==0x31504442{
       process.send(mailbox,&pkt)?;
       last_seq=seq;
+    }
+    // Read verified GAME-GUEST state, not optimistic host-side success.
+    if last_report.elapsed()>=Duration::from_secs(3){
+     if let Ok(status)=process.read(mailbox+ACK_OFFSET,24){
+      let u32_at=|o:usize|u32::from_le_bytes(status[o..o+4].try_into().unwrap());
+      let ack=u32_at(0);
+      let state=u32_at(4);
+      let camera=u64::from_le_bytes(status[8..16].try_into().unwrap());
+      let applied=u32_at(16);
+      let method=u32_at(20);
+      println!("[RUST_LINK] guest ACK={ack} seq={last_seq} state={state} applied={applied} warp_method={method} camera=0x{camera:x}");
+      if state==4 && last_seq!=0 {println!("[RUST_LINK] Native guest has not applied both Link and camera yet");}
+      if state==7 {println!("[RUST_LINK] Guest reports Link transform + first-person camera applied");}
+     }
+     last_report=Instant::now();
     }
     // No process memory writing without an authenticated guest ACK.
     if process.query(mailbox).is_none(){return Err(failure("Mailbox mapping vanished"))}
