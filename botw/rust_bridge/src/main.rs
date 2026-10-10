@@ -5,6 +5,8 @@ mod engine;
 #[cfg(target_os="windows")]
 mod guest_gdb;
 #[cfg(target_os="windows")]
+mod terrain;
+#[cfg(target_os="windows")]
 mod telemetry;
 
 #[cfg(target_os="windows")]
