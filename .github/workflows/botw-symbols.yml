@@ -1,7 +1,7 @@
 name: Investigate BOTW Havok raycast NX150 symbols
 on:
   push:
-    branches: [botw-native-creative-flight]
+    branches: [botw-test20-responsive60-20261010]
     paths:
       - '.github/workflows/botw-symbols.yml'
   workflow_dispatch:
