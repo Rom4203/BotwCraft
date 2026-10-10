@@ -7,11 +7,13 @@
 #include <wiixlaunch/imports/botw_player.h>
 #include <wiixlaunch/imports/botw_actor.h>
 #include <wiixlaunch/imports/botw_camera.h>
+#include <wiixlaunch/imports/wiixl_call.h>
 #include <wiixlaunch/mod_math.h>
 
 namespace S {
 WXL_USE_wiixl_core(Log);
-WXL_USE_wiixl_core(ImageBase);
+WXL_USE_wiixl_call(ImageBase);
+WXL_USE_wiixl_call(ResolveTarget);
 WXL_USE_wiixl_core(InstallHook);
 WXL_USE_botw_player(Init);
 WXL_USE_botw_player(RegisterTick);
@@ -305,12 +307,15 @@ static void installFirstPersonHook() {
         return;
     }
     constexpr uintptr_t kLookAtCameraMatrixNX150 = 0x00B1BE7Cu;
+    if (!S::ResolveTarget) return;
     const uintptr_t image=S::ImageBase();
     if (image<0x10000u || (image&0xfffu)) {
         S::Log("[BOTW_NATIVE] Camera hook refused: image base unexpected");
         return;
     }
-    const uintptr_t target=image+kLookAtCameraMatrixNX150;
+    // wiixl.call performs the Switch relocation correctly. wiixl.core
+    // ImageBase() RETURNS ZERO on Switch and must not be used here.
+    const uintptr_t target=S::ResolveTarget(kLookAtCameraMatrixNX150,0);
     const uintptr_t orig=S::InstallHook(target,
         reinterpret_cast<uintptr_t>(&BotwCraftCameraMatrixHook));
     if (!orig) {
