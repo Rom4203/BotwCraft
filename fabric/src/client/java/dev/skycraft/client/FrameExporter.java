@@ -19,7 +19,9 @@ import net.minecraft.client.Minecraft;
  * once the GPU says the copy finished, typically a frame later.
  */
 public final class FrameExporter {
-	private static final int STAGING = 3;
+	private static final int STAGING = 2;
+    private static final long BOTW_MIN_CAPTURE_NANOS = 33_000_000L;
+    private static long lastCaptureNanos;
 	private static final int FREE = 0;
 	private static final int PENDING = 1;
 	private static final int READY = 2;
@@ -41,6 +43,12 @@ public final class FrameExporter {
 
 	public static void capture(Minecraft minecraft) {
 		shipReadyFrames();
+        // GPU->CPU readback takes milliseconds and copies 4–8MB of pixels.
+        // Send the hand/HUD at 30Hz, not at every uncapped render frame.
+        // Minecraft input and physics still run independently at full speed.
+        long now = System.nanoTime();
+        if (now - lastCaptureNanos < BOTW_MIN_CAPTURE_NANOS) return;
+        lastCaptureNanos = now;
 
 		RenderTarget target = minecraft.gameRenderer.mainRenderTarget();
 		GpuTexture color = target.getColorTexture();
