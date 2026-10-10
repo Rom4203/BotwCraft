@@ -103,6 +103,7 @@ static uint32_t s_lastActiveTick = 0;
 static bool s_loggedPlayer = false;
 static bool s_loggedPose = false;
 static bool s_loggedTimeout = false;
+static bool s_loggedHideFailure = false;
 static bool s_loggedWarp = false;
 static bool s_loggedCamera = false;
 static bool s_inputInit=false;
@@ -478,10 +479,15 @@ extern "C" __attribute__((used)) void BotwCraftPlayerTick() {
     }
     const bool warped = warpLink(actor,p);
     const bool camera = updateCameraFromGame(p);
-    // Hiding Link should not depend on whether movement was accepted.
-    // Hide the render mesh only after the actual camera is in FPS mode;
-    // retain Link's physics/actor and restore visibility on disarm.
-    if (camera) updateVisualModel(actor,true);
+    // Link's renderer is not needed for first-person BotwCraft. Do NOT
+    // couple visibility to camera-matrix hook timing: that hook may run after
+    // the player tick or report a one-frame delay, leaving Link on screen.
+    // This does not delete the actor; visuals are restored on disconnect.
+    const bool mesh_hidden=updateVisualModel(actor,true);
+    if (!mesh_hidden && !s_loggedHideFailure) {
+        s_loggedHideFailure=true;
+        S::Log("[BOTW_NATIVE] LINK_RENDER_HIDE_FAILED: model binding unavailable");
+    }
     g_BotwCraftLiveMailbox.runtime_state =
         warped && camera ? kWarpAndCameraOK : warped ? kWarpOK :
         camera ? kCameraOK : kEngineUnavailable;
