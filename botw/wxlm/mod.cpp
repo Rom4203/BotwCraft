@@ -241,40 +241,34 @@ static bool warpLink(uint32_t handle, const Pose& p) {
     return rawSwitchSetMtx(handle,mtx,p);
 }
 
-// Direct Switch LookAtCamera writer. The public botw.camera surface filters
-// to [0x10000000,0xa0000000), even though Switch heap camera objects may live
-// above that range. That filter made the previous camera SetPosition calls
-// return false without writing. We validate the actual object from the game's
-// camera getter instead of treating the range as a capability test.
+// BOTW Switch 1.5.0 FIRST PERSON CAMERA (crash fix).
+//
+// Prior build crashed at WXLM+0x6A0: ldr s4,[x22,#0x38] after calling
+// main+0x0131E194 using an unverified no-argument function signature.
+// The returned X0 was 0x8b080c089a9f3108 (invalid camera pointer).
+// NEVER call that getter or dereference its unvalidated result again.
+//
+// Instead the game's real sead::LookAtCamera::doUpdateMatrix callback
+// supplies a genuine LookAtCamera *this* in its first argument.
 static uintptr_t s_liveCamera=0;
 static bool s_cameraHookInstalled=false;
 static bool s_cameraHookTried=false;
 static bool s_loggedCameraCandidate=false;
 static float s_lastEye[3]={};
 static float s_lastForward[3]={0.f,0.f,1.f};
+static float s_lastLinkPosition[3]={};
 static uint32_t s_lastFpsTick=0;
+static uint32_t s_lastMatrixTick=0;
 using CameraMatrixUpdate=void (*)(void*,void*);
 static CameraMatrixUpdate s_cameraMatrixOriginal=nullptr;
 
-static bool plausibleCamera(uintptr_t ptr, const Pose& p) {
-    if (ptr < 0x10000 || (ptr&7u)) return false;
-    // Game returns a camera pointer; read ONLY after a validated in-game
-    // lookup and a valid player actor. Weed out nonsense and cutscene cameras.
-    const volatile float* pos=reinterpret_cast<const volatile float*>(ptr+0x38);
-    const float x=pos[0],y=pos[1],z=pos[2];
-    if (!finiteFloat(x)||!finiteFloat(y)||!finiteFloat(z)) return false;
-    float dx=x-p.position[0],dy=y-p.position[1],dz=z-p.position[2];
-    return dx*dx+dy*dy+dz*dz < 10000.f;
-}
+// Camera offsets are Switch-specific: +0x38 pos, +0x44 target, +0x50 up.
 static bool setCameraLookAt(uintptr_t ptr,const float eye[3],const float forward[3]){
     if (ptr<0x10000 || (ptr&7u)) return false;
-    float len2=forward[0]*forward[0]+forward[1]*forward[1]+forward[2]*forward[2];
+    const float len2=forward[0]*forward[0]+forward[1]*forward[1]+forward[2]*forward[2];
     if (!(len2>0.5f && len2<1.5f)) return false;
     for(unsigned i=0;i<3;i++)
       if(!finiteFloat(eye[i])||!finiteFloat(forward[i])) return false;
-    // Switch sead::LookAtCamera layout verified by WiiXLaunch camera.hpp.
-    // Camera pos +0x38, at +0x44, up +0x50: these are VIEW coordinates,
-    // independent from Link actor rotation and its chase-camera behaviour.
     volatile float* pos=reinterpret_cast<volatile float*>(ptr+0x38);
     volatile float* at=reinterpret_cast<volatile float*>(ptr+0x44);
     volatile float* up=reinterpret_cast<volatile float*>(ptr+0x50);
@@ -285,17 +279,34 @@ static bool setCameraLookAt(uintptr_t ptr,const float eye[3],const float forward
     return true;
 }
 
-// Replaces the *matrix computation* not just the camera's tracking state.
-// Zelda is free to run its normal chase-camera code earlier in the frame,
-// but the final camera matrix is rebuilt from Minecraft's eye and yaw/pitch.
-// Installed only after player+camera pointers are valid and the game is in
-// gameplay, never during Ryujinx start or its menus.
+// This callback gets an actual in-game camera receiver from Zelda's native
+// camera method. Unlike the old getter, the camera pointer is NEVER guessed.
 extern "C" __attribute__((used)) void BotwCraftFirstPersonMatrix(
      void* camera,void* outputMatrix) {
-    if (camera && reinterpret_cast<uintptr_t>(camera)==s_liveCamera &&
-        s_lastFpsTick && s_ticks-s_lastFpsTick<=3u){
-        if(setCameraLookAt(s_liveCamera,s_lastEye,s_lastForward))
-            ++g_BotwCraftLiveMailbox.camera_matrix_frames;
+    const uintptr_t ptr=reinterpret_cast<uintptr_t>(camera);
+    if (ptr>=0x10000u && (ptr&7u)==0 &&
+        s_lastFpsTick && s_ticks>=s_lastFpsTick &&
+        s_ticks-s_lastFpsTick<=3u) {
+        const volatile float* oldPos=
+            reinterpret_cast<const volatile float*>(ptr+0x38);
+        const float x=oldPos[0],y=oldPos[1],z=oldPos[2];
+        if (finiteFloat(x)&&finiteFloat(y)&&finiteFloat(z)) {
+            const float dx=x-s_lastLinkPosition[0];
+            const float dy=y-s_lastLinkPosition[1];
+            const float dz=z-s_lastLinkPosition[2];
+            // Do not redirect cutscene, minimap or distant scene cameras.
+            if (dx*dx+dy*dy+dz*dz < 10000.f &&
+                setCameraLookAt(ptr,s_lastEye,s_lastForward)) {
+                s_liveCamera=ptr;
+                s_lastMatrixTick=s_ticks;
+                g_BotwCraftLiveMailbox.camera_pointer=ptr;
+                ++g_BotwCraftLiveMailbox.camera_matrix_frames;
+                if (!s_loggedCameraCandidate) {
+                    s_loggedCameraCandidate=true;
+                    S::Log("[BOTW_NATIVE] CAMERA_FIRST_PERSON_MATRIX_EXECUTED");
+                }
+            }
+        }
     }
     if (s_cameraMatrixOriginal)
         s_cameraMatrixOriginal(camera,outputMatrix);
@@ -307,9 +318,9 @@ static void installGameplayCameraHook() {
         S::Log("[BOTW_NATIVE] CAMERA_NO_HOOK_EXPORT");
         return;
     }
-    // NX150 sead::LookAtCamera::doUpdateMatrix(Matrix34f*) const.
-    // Function address supplied by the decomp symbol set and relocated by
-    // wiixl.call; do not patch instructions by guessing a host address.
+    // NX150 sead::LookAtCamera::doUpdateMatrix(Matrix34f*) const,
+    // relative 0x00B1BE7C (relocated by WiiXLaunch).
+    // Only install once Link and Minecraft are both active.
     const uintptr_t at=S::ResolveTarget(0x00b1be7cu,0);
     if(!at || (at&3u))return;
     const uintptr_t original=S::InstallHook(
@@ -323,28 +334,20 @@ static void installGameplayCameraHook() {
     S::Log("[BOTW_NATIVE] CAMERA_MATRIX_HOOK_ACTIVE_NX150");
 }
 static bool updateCameraFromGame(const Pose& p) {
-    if (!S::ResolveTarget || !(p.flags & 0x10u))return false;
-    // ksys/cam getter, NX150 main NSO relative; obtain actual camera object.
-    using GetGameplayCamera=uintptr_t (*)();
-    const uintptr_t target=S::ResolveTarget(0x0131e194u,0);
-    if (!target || (target&3u))return false;
-    const uintptr_t addr=reinterpret_cast<GetGameplayCamera>(target)();
-    if(!plausibleCamera(addr,p)) return false;
-    if(!s_loggedCameraCandidate){
-       s_loggedCameraCandidate=true;
-       S::Log("[BOTW_NATIVE] VALIDATED_GAME_CAMERA_FOUND");
-    }
-    // Store a snapshot of the current Minecraft look vector. The hook will
-    // consume the same pose without interpreting Link's rotation.
+    if (!(p.flags & 0x10u))return false;
     for(unsigned i=0;i<3;i++){
-       s_lastEye[i]=p.eye[i];s_lastForward[i]=p.forward[i];
+        if(!finiteFloat(p.eye[i]) || !finiteFloat(p.forward[i]) ||
+           !finiteFloat(p.position[i]))return false;
+        s_lastEye[i]=p.eye[i];
+        s_lastForward[i]=p.forward[i];
+        s_lastLinkPosition[i]=p.position[i];
     }
-    s_liveCamera=addr;
     s_lastFpsTick=s_ticks;
-    g_BotwCraftLiveMailbox.camera_pointer=addr;
-    if (!setCameraLookAt(addr,s_lastEye,s_lastForward))return false;
     installGameplayCameraHook();
-    return s_cameraHookInstalled;
+    // Hook installation alone is not proof of in-game FPS mode.
+    return s_cameraHookInstalled && s_lastMatrixTick>0 &&
+           s_ticks>=s_lastMatrixTick &&
+           s_ticks-s_lastMatrixTick<=3u;
 }
 
 static bool readPacket(Pose& out) {
