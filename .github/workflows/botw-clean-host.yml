@@ -1,0 +1,36 @@
+name: BotwCraft clean WiiXLaunch host (no demo logo)
+on:
+  workflow_dispatch:
+  push:
+    branches: [botw-native-creative-flight]
+    paths:
+      - '.github/workflows/botw-clean-host.yml'
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: devkitpro/devkita64:latest
+    steps:
+      - name: Fetch upstream WiiXLaunch and BOTW game module
+        run: |
+          git clone --depth=1 --recurse-submodules https://github.com/BladesawStudios/WiiXLaunch.git wiix
+          test -e wiix/vendor/wiixlaunch-botw/module.hpp || find wiix/vendor/wiixlaunch-botw -maxdepth 2 -type f | head
+      - name: Remove ONLY demo logo (retain NVN callbacks)
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path=Path('wiix/src/main.cpp')
+          s=path.read_text()
+          old='#if !defined(WIIXL_NO_DEMO)\n#define WIIXL_BOTW_DEMO 1\n#endif'
+          assert old in s, 'upstream logo gate changed; do not silently ship logo'
+          path.write_text(s.replace(old, '// WIIXL_BOTW_DEMO intentionally disabled for BotwCraft release'))
+          print('Disabled only WIIXL_BOTW_DEMO; NVN::Init is unchanged')
+          PY
+      - name: Build Switch BOTW 1.5.0 host
+        working-directory: wiix
+        run: bash build_switch.sh
+      - name: Upload clean host
+        uses: actions/upload-artifact@v4
+        with:
+          name: botwcraft-wiixlaunch-no-logo-subsdk9
+          path: wiix/build/switch/subsdk9
+          if-no-files-found: error
