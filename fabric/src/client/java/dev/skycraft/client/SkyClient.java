@@ -264,6 +264,16 @@ public final class SkyClient {
 		if (!linked || player == null) {
 			return;
 		}
+        if (BOTW_NATIVE) {
+            // BOTW does not send Skyrim triangular-collision sections. The
+            // old SkyCraft "wait for three known sections" never completes,
+            // so it traps Steve in an endless setPos + zero-velocity loop.
+            // In BOTW mode the native player/link transform is independent
+            // and Minecraft must tick physics uninterrupted.
+            holdPos = null;
+            holdSince = 0;
+            return;
+        }
 		if (!sky.inGame() || sky.loading()) {
 			// Skyrim is on its main menu or a loading screen: park the player where they are.
 			if (holdPos == null) {
