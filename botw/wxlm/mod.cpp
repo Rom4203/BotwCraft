@@ -368,6 +368,23 @@ static bool readPoseBytes(Pose& out, const volatile Pose& src) {
     for (unsigned i=0;i<sizeof(Pose);++i) dest[i]=from[i];
     return !(out.seq&1u) && out.magic==kMagic && out.version==1;
 }
+// BDP3 mode: exactly ONE 112-byte GDB write per motion update.
+// Each independent slot contains a checksum of the other 108 bytes.
+// The game chooses the newest *complete* packet without a selector write.
+// This eliminates a synchronous GDB roundtrip on the camera critical path.
+static uint32_t poseCrc(const Pose& pose) {
+    const uint8_t* data=reinterpret_cast<const uint8_t*>(&pose);
+    uint32_t hash=2166136261u;
+    for (unsigned i=0;i<sizeof(Pose);i++){
+        if(i>=104u && i<108u)continue; // reserved_tail[0] checksum
+        hash=(hash^data[i])*16777619u;
+    }
+    return hash;
+}
+static bool readCrcSlot(Pose& out,unsigned slot) {
+    if (!readPoseBytes(out,g_BotwCraftLiveMailbox.fast[slot]))return false;
+    return out.seq!=0 && out.reserved_tail[0]==poseCrc(out);
+}
 static bool readPacket(Pose& out) {
     for(unsigned attempt=0;attempt<6;attempt++){
         const uint32_t selected=g_BotwCraftLiveMailbox.fast_slot;
@@ -375,6 +392,17 @@ static bool readPacket(Pose& out) {
             if (!readPoseBytes(out,g_BotwCraftLiveMailbox.fast[selected-1u]))
                 continue;
             if (g_BotwCraftLiveMailbox.fast_slot==selected) return true;
+        }else if(selected==3u){
+            Pose first{}, second{};
+            const bool a=readCrcSlot(first,0u);
+            const bool b=readCrcSlot(second,1u);
+            if (!a && !b) return false;
+            if (a && b) {
+                out=(static_cast<int32_t>(first.seq-second.seq)>0)
+                    ? first : second;
+            }else out=a?first:second;
+            // If sender changes mode during read, retry instead.
+            if(g_BotwCraftLiveMailbox.fast_slot==3u)return true;
         }else if(selected==0u){
             const uint32_t before=g_BotwCraftLiveMailbox.packet.seq;
             if(before&1u)continue;
