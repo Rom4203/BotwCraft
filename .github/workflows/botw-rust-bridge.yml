@@ -1,0 +1,26 @@
+name: BotwCraft Rust host
+on:
+  push:
+    branches: [botw-native-creative-flight]
+  pull_request:
+    paths:
+      - 'botw/rust_bridge/**'
+      - '.github/workflows/botw-rust-bridge.yml'
+jobs:
+  check:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Check Rust transport
+        run: cargo check --manifest-path botw/rust_bridge/Cargo.toml --all-targets
+      - name: Rust bridge tests
+        run: cargo test --manifest-path botw/rust_bridge/Cargo.toml
+      - name: Build Windows Rust executable
+        run: cargo build --release --manifest-path botw/rust_bridge/Cargo.toml
+      - name: Upload runnable Rust bridge
+        uses: actions/upload-artifact@v4
+        with:
+          name: botwcraft-rust-bridge-windows
+          path: botw/rust_bridge/target/release/botwcraft-rust-bridge.exe
+          if-no-files-found: error

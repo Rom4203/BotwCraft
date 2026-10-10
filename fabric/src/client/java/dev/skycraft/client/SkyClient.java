@@ -17,6 +17,13 @@ import org.lwjgl.sdl.SDLVideo;
  * thread, called from MinecraftMixin.
  */
 public final class SkyClient {
+	// Render-only performance settings for BOTW. No physics, commands, input,
+    // teleport or shared-state semantics are modified from the working V8.
+    // Opt out for a legacy SkyCraft session: -Dbotwcraft.performance=false
+    private static final boolean BOTW_PERFORMANCE =
+        Boolean.parseBoolean(System.getProperty("botwcraft.performance", "true"));
+    private static long nextWorldExportNanos;
+
 	private static final boolean SHOW_WINDOW = Boolean.getBoolean("skycraft.showWindow");
 	// Started by Skyrim (SkyCraft's bundled instance passes -Dskycraft.startHidden=true): no window and
 	// no title-screen music from the first frame, even while Skyrim is paused (Alt-Tabbed) and the
@@ -389,7 +396,16 @@ public final class SkyClient {
 
 		if ((flags & Proto.MC_IN_WORLD) != 0) {
 			try {
-				WorldExporter.frame(minecraft, minecraft.getDeltaTracker().getGameTimeDeltaPartialTick(false));
+                // WorldExporter exports chunks/entities into SKYRIM's old
+                // renderer; it can mesh thousands of blocks, and BotwCraft's
+                // separate Ryujinx window has its own Hyrule geometry.
+                // Preserve it (unlike V9), but budget at 10Hz instead of
+                // re-running costly mesh work on EVERY Minecraft render frame.
+                long time = System.nanoTime();
+                if (!BOTW_PERFORMANCE || time >= nextWorldExportNanos) {
+                    nextWorldExportNanos = time + 100_000_000L;
+				    WorldExporter.frame(minecraft, minecraft.getDeltaTracker().getGameTimeDeltaPartialTick(false));
+                }
 			} catch (RuntimeException e) {
 				if (exporterErrors++ < 5) {
 					SkyCraft.LOG.error("SkyCraft: world export failed", e);
@@ -401,6 +417,11 @@ public final class SkyClient {
 
 	/** End of the frame: render at most once per Skyrim frame instead of spinning freely. */
 	public static void paceFrame() {
+        // The original V8 busy-spins up to 25ms for every single render
+        // frame while waiting for SkyState to advance. The BOTW bridge's
+        // SkyState isn't synchronized to Minecraft's render frames, so this
+        // starves Minecraft's UI thread for no gameplay benefit.
+        if (BOTW_PERFORMANCE) return;
 		if (!linked) {
 			return;
 		}
@@ -427,7 +448,7 @@ public final class SkyClient {
 		options.pauseOnLostFocus = false;
 		options.vignette().set(false);
 		options.enableVsync().set(false);
-		options.framerateLimit().set(260);
+		options.framerateLimit().set(BOTW_PERFORMANCE ? 60 : 260);
 		// Minecraft doesn't draw the world itself; these only decide how far out placed blocks,
 		// arrows and Skyrim NPC stand-ins stay loaded and simulated.
 		options.renderDistance().set(8);

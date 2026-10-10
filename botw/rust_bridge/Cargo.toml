@@ -1,0 +1,9 @@
+[package]
+name = "botwcraft-rust-bridge"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Rust host transport for Minecraft <-> BOTW WiiXLaunch"
+
+[dependencies]
+serde_json = "1.0"

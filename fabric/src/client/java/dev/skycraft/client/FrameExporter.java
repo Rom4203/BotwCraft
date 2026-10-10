@@ -19,7 +19,13 @@ import net.minecraft.client.Minecraft;
  * once the GPU says the copy finished, typically a frame later.
  */
 public final class FrameExporter {
-	private static final int STAGING = 3;
+	private static final int STAGING = 2;
+    // Limit GPU readback frequency without slowing keyboard/mouse polling.
+    // Old V8 copied 4–8 MiB at up to 260 FPS, enough to saturate GPU PCIe
+    // transfers and stall the Minecraft render thread.
+    private static final long READBACK_INTERVAL_NANOS = 33_000_000L;
+    private static long lastReadbackRequestNanos;
+    private static long lastReadbackShipNanos;
 	private static final int FREE = 0;
 	private static final int PENDING = 1;
 	private static final int READY = 2;
@@ -40,7 +46,15 @@ public final class FrameExporter {
 	}
 
 	public static void capture(Minecraft minecraft) {
-		shipReadyFrames();
+        long now = System.nanoTime();
+        // Poll a finished asynchronous buffer no more than ~30 times/s.
+        // Input is processed in SkyClient.beginFrame() independently.
+        if (now - lastReadbackShipNanos >= READBACK_INTERVAL_NANOS) {
+            shipReadyFrames();
+            lastReadbackShipNanos = now;
+        }
+        if (now - lastReadbackRequestNanos < READBACK_INTERVAL_NANOS) return;
+        lastReadbackRequestNanos = now;
 
 		RenderTarget target = minecraft.gameRenderer.mainRenderTarget();
 		GpuTexture color = target.getColorTexture();
