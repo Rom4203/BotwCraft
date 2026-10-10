@@ -381,18 +381,18 @@ def run(name=NAME, rgba=True, fps=20, key_background=False):
             now = time.monotonic()
             if where:
                 frame = shm.frame()
-                if frame and frame[3] != last_id:
+                changed = frame is not None and frame[3] != last_id
+                if changed:
                     last_id, last_frame_at = frame[3], now
                     last_frame = frame
-                # If Ryujinx moves or resizes, reposition even if Minecraft
-                # has not published a newer HUD pixel frame yet.
-                if last_frame and now - last_frame_at <= 1.0 and (
-                        frame and frame[3] == last_id or where != last_location):
-                    if frame and frame[3] == last_id or where != last_location:
-                        win.draw(last_frame, where, rgba=rgba,
-                                 key_background=key_background)
-                        last_location = where
-                if now - last_frame_at > 1.0:
+                # Refresh on *either* a new Minecraft frame or game-window
+                # relocation. Never assume the game rectangle stays fixed.
+                if last_frame and now - last_frame_at <= 1.0:
+                    if changed or where != last_location:
+                        if win.draw(last_frame, where, rgba=rgba,
+                                    key_background=key_background):
+                            last_location = where
+                else:
                     win.hide()
                     last_location = None
             else:
