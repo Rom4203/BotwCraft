@@ -160,8 +160,12 @@ WIIXL_HOOK_DEFINE_TRAMPOLINE(FirstPersonCameraHook) {
                             ddx*ddx+ddy*ddy+ddz*ddz<40000.f) {
                             const float* eye=target.eye;
                             const float* f=target.forward;
+                            // Put the view 25 cm ahead of Steve's eye,
+                            // avoiding most of Link's head/face geometry.
                             WiiXLaunch::BotW::Camera::SetPosition(
-                                camera,eye[0],eye[1],eye[2]);
+                                camera,eye[0]+f[0]*0.25f,
+                                eye[1]+f[1]*0.25f,
+                                eye[2]+f[2]*0.25f);
                             WiiXLaunch::BotW::Camera::SetLookAt(
                                 camera,eye[0]+f[0]*10.f,
                                 eye[1]+f[1]*10.f,eye[2]+f[2]*10.f);
