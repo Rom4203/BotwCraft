@@ -89,15 +89,7 @@ inline bool Read(Target& out) {
     const uint32_t last = *start;
     return Valid(out,first,last);
 }
-inline void Register() {
-    if (WiiXLaunch::GameVersion::Fingerprint() != kFingerprint) return;
-    // On each run, host OS address changes and is discovered by marker scan.
-    WIIXL_LOG("BotwCraft:DIRECT_GUEST_MAILBOX_ADDR=0x%lx bytes=152",
-             static_cast<unsigned long>(reinterpret_cast<uintptr_t>(&gMailbox)));
-    WIIXL_LOG("BotwCraft:DIRECT_LINK_BACKEND_ARMED=0 (requires explicit BDP1 opt-in)");
-    FirstPersonCameraHook::Install(kCameraDoUpdateMatrixOffset,0);
-    WIIXL_LOG("BotwCraft:DIRECT_FIRST_PERSON_CAMERA_HOOK_INSTALLED_15");
-}
+inline void Register();
 
 // Returns false for an unverified vtable, and does not mutate any coordinates.
 // Index is from zeldaret/botw ksys::act::Actor virtual declaration.
@@ -182,6 +174,17 @@ WIIXL_HOOK_DEFINE_TRAMPOLINE(FirstPersonCameraHook) {
         Orig(camera,matrix);
     }
 };
+
+inline void Register() {
+    if (WiiXLaunch::GameVersion::Fingerprint() != kFingerprint) return;
+    // On each run, host OS address changes and is discovered by marker scan.
+    WIIXL_LOG("BotwCraft:DIRECT_GUEST_MAILBOX_ADDR=0x%lx bytes=152",
+             static_cast<unsigned long>(reinterpret_cast<uintptr_t>(&gMailbox)));
+    WIIXL_LOG("BotwCraft:DIRECT_LINK_BACKEND_ARMED=0 (requires explicit BDP1 opt-in)");
+    FirstPersonCameraHook::Install(kCameraDoUpdateMatrixOffset,0);
+    WIIXL_LOG("BotwCraft:DIRECT_FIRST_PERSON_CAMERA_HOOK_INSTALLED_15");
+}
+
 
 inline void Poll(void* player, const float current[3]) {
     if (WiiXLaunch::GameVersion::Fingerprint() != kFingerprint ||
