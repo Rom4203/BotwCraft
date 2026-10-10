@@ -255,6 +255,31 @@ public final class SkyClient {
 		mc.walkDist = bob ? avatar.getInterpolatedWalkDistance(1.0F) : 0.0F;
 		mc.bobO = bob ? avatar.getInterpolatedBob(0.0F) : 0.0F;
 		mc.bob = bob ? avatar.getInterpolatedBob(1.0F) : 0.0F;
+        if (BOTW_NATIVE) {
+            // Deliver current Minecraft PHYSICS even when GPU rendering slows.
+            // In the old build only afterRender() refreshed x/y/z/frameCounter.
+            // At 1 FPS, the Rust bridge saw a frozen player and Zelda repeatedly
+            // warped/fell. Client ticks are independent of optional HUD readback.
+            int flags = Proto.MC_IN_WORLD;
+            if (player.onGround()) flags |= Proto.MC_ON_GROUND;
+            if (player.isShiftKeyDown()) flags |= Proto.MC_SNEAKING;
+            if (player.isSprinting()) flags |= Proto.MC_SPRINTING;
+            if (player.isSwimming()) flags |= Proto.MC_SWIMMING;
+            if (player.getAbilities().flying) flags |= Proto.MC_FLYING;
+            if (player.isDeadOrDying()) flags |= Proto.MC_DEAD;
+            if (minecraft.gui.screen() != null) flags |= Proto.MC_SCREEN_OPEN;
+            mc.flags = flags;
+            mc.x = player.getX();
+            mc.y = player.getY();
+            mc.z = player.getZ();
+            mc.yaw = player.getYRot();
+            mc.pitch = player.getXRot();
+            mc.eyeHeight = eyeSmoothed;
+            mc.eyeX = mc.x;
+            mc.eyeY = mc.y + mc.eyeHeight;
+            mc.eyeZ = mc.z;
+            mc.frameCounter = ++frameCounter;
+        }
 		SkyLink.writeMcState(mc);
 	}
 
