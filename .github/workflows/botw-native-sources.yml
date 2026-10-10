@@ -6,6 +6,8 @@ on:
       - '.gitmodules'
       - 'WiiXLaunch'
       - 'botw/guest_mod/**'
+      - 'botw/native_direct_executor.hpp'
+      - 'botw/test_native_direct_executor.cpp'
       - 'botw/native_direct_pose.hpp'
       - 'botw/test_native_direct_pose.cpp'
       - 'botw/native_world_scene.hpp'
@@ -75,6 +77,11 @@ jobs:
           c++ -std=c++20 -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer -Wall -Wextra \
             -I botw botw/test_native_direct_pose.cpp -o /tmp/botw-direct-pose-test
           /tmp/botw-direct-pose-test
+      - name: Verify atomic Link and camera backend lifecycle
+        run: |
+          c++ -std=c++20 -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer -Wall -Wextra \
+            -I botw botw/test_native_direct_executor.cpp -o /tmp/botw-direct-executor-test
+          /tmp/botw-direct-executor-test
       - name: Verify game-module source pin
         run: |
           test "$(git -C WiiXLaunch rev-parse HEAD)" = "30e0502ff2abb76b1816e8271d4126e0a95ac9fc"
