@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parent
 
 
 def build_commands(preview_blocks=False, gdb_port=None, world_gdb_port=None,
-                   hud_overlay=False):
+                   hud_overlay=False, native_hud_port=None):
     scripts = [("host_bridge.py", ["--preview-blocks"] if preview_blocks else [])]
     if not preview_blocks:
         scripts.append(("ryujinx_log_relay.py", []))
@@ -23,6 +23,10 @@ def build_commands(preview_blocks=False, gdb_port=None, world_gdb_port=None,
             scripts.append(("gdb_mesh_bridge.py", ["--port", str(gdb_port)]))
         else:
             scripts.append(("native_mesh_bridge.py", []))
+        if native_hud_port is not None:
+            # Sends ONE real MC HUD frame to WiiXLaunch native NVN using GDB.
+            scripts.append(("native_hud_bridge.py",
+                            ["--port", str(native_hud_port)]))
         if hud_overlay:
             # True SkyCraft v11 GPU HUD, click-through Win32 above Ryujinx.
             # Never take focus; Minecraft owns keyboard and mouse.
@@ -42,7 +46,13 @@ def main():
                     help="BWC2 real-world Hyrule 3D channel, separate from 2D GDB")
     ap.add_argument("--hud-overlay", action="store_true",
                     help="Display original Minecraft HUD over Ryujinx without focus capture")
+    ap.add_argument("--native-hud-port", type=int, default=None,
+                    help="EXPERIMENTAL: send one real MC HUD frame to native Zelda NVN")
     args = ap.parse_args()
+    if args.native_hud_port is not None and not (1 <= args.native_hud_port <= 65535):
+        ap.error("invalid native HUD GDB port")
+    if args.native_hud_port is not None and args.hud_overlay:
+        ap.error("choose native NVN HUD or external Win32 HUD, never both")
     if args.world_gdb_port is not None and not (1 <= args.world_gdb_port <= 65535):
         ap.error("invalid world GDB port")
     if args.world_gdb_port is not None and args.gdb_port is not None:
@@ -58,7 +68,8 @@ def main():
         print("[BotwCraft] Launch Minecraft manually; type /botwcraft connect in its chat.", flush=True)
         print("[BotwCraft] No Java arguments, Prism profile changes or automatic worlds.", flush=True)
         for name, extra in build_commands(args.preview_blocks, args.gdb_port,
-                                                  args.world_gdb_port, args.hud_overlay):
+                                                  args.world_gdb_port, args.hud_overlay,
+                                                  args.native_hud_port):
             script = ROOT / name
             if not script.is_file():
                 raise FileNotFoundError(f"Missing packaged component: {script}")
@@ -72,6 +83,10 @@ def main():
             for name, proc in processes:
                 code = proc.poll()
                 if code is not None:
+                    if name == "native_hud_bridge.py" and code == 0:
+                        # The proof is deliberately one static NVN upload;
+                        # the guest renderer continues rendering afterward.
+                        continue
                     if name == "hud_overlay.py":
                         if not getattr(proc, "_botwcraft_warned_hud", False):
                             print("[BotwCraft] WARNING: optional Windows HUD overlay exited "
