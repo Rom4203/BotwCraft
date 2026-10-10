@@ -104,7 +104,8 @@ impl Engine{
         ma[0],ma[1],ma[2],ga[0],ga[1],ga[2],0.0];
       if vals.iter().all(|v|finite(*v)){
        enabled=true;
-       let flags=ACTIVE|FPS|if m.flags&MC_FLY!=0{FLY}else{0};
+       // Explicitly authorize the native WXLM actuator only while MC is ready.
+       let flags=ACTIVE|FPS|0x10|if m.flags&MC_FLY!=0{FLY}else{0};
        out[12..16].copy_from_slice(&flags.to_le_bytes());
        out[16..24].copy_from_slice(&m.frame.to_le_bytes());
        for (i,v) in vals.iter().enumerate(){
