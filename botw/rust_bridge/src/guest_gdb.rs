@@ -3,6 +3,7 @@
 use std::{fs,io::{self,Read,Write},net::{SocketAddr,TcpStream},
  path::Path,sync::{Arc,Mutex},thread,time::{Duration,Instant}};
 use crate::{engine::Engine,shared::DIRECT};
+use serde_json::json;
 const MAGIC:&[u8]=b"BOTWCRAFT_WXLM_BDP1_LIVE_20261010";
 const MARKER_BYTES:usize=40;
 const POSE_BYTES:usize=112;
@@ -115,40 +116,102 @@ impl Remote{
   Err(other("Core-frame tick did not ACK the unarmed GDB probe"))
  }
 }
+// A single 20-byte READ of the native guest's live Link state.
+// This is intentionally not a host-process memory scan. The native
+// player callback validates the actor handle and samples Actor::mMtx.
+fn read_link(remote:&mut Remote,addr:usize)->io::Result<Option<(u32,[f64;3])>>{
+ let buf=remote.read(addr+176,20)?;
+ let tick=u32::from_le_bytes(buf[0..4].try_into().unwrap());
+ let valid=u32::from_le_bytes(buf[4..8].try_into().unwrap());
+ if tick==0 || valid!=1 {return Ok(None)}
+ let mut pos=[0.0;3];
+ for (i,x) in pos.iter_mut().enumerate(){
+   *x=f32::from_le_bytes(buf[8+i*4..12+i*4].try_into().unwrap()) as f64;
+ }
+ if pos.iter().any(|v|!v.is_finite()||v.abs()>100000.0){return Ok(None)}
+ Ok(Some((tick,pos)))
+}
+fn active_packet(packet:&[u8])->bool{
+ if packet.len()!=POSE_BYTES{return false}
+ let seq=u32::from_le_bytes(packet[0..4].try_into().unwrap());
+ let magic=u32::from_le_bytes(packet[4..8].try_into().unwrap());
+ let version=u32::from_le_bytes(packet[8..12].try_into().unwrap());
+ let flags=u32::from_le_bytes(packet[12..16].try_into().unwrap());
+ seq!=0 && seq&1==0 && magic==0x31504442 && version==1 && (flags&0x13)==0x13
+}
 pub fn transport_loop(state:Arc<Mutex<Engine>>){
  loop{
   let result=(||->io::Result<()>{
-   let addr=load_addr().ok_or_else(||other("Awaiting GUEST_MAILBOX log after current Ryujinx boot"))?;
+   let addr=load_addr().ok_or_else(||other("Awaiting current Ryujinx guest mailbox"))?;
    let mut remote=Remote::connect()?;
-   remote.authenticate(addr)?;
-   let mut last_seq=0u32;let mut last_report=Instant::now()-Duration::from_secs(5);
-   let mut last_tick=Instant::now();
+   // Read-only identity check: don't write probe packets when the game is
+   // still loading or standing in a menu without an actor.
+   let identity=remote.read(addr,MARKER_BYTES)?;
+   if !identity.starts_with(MAGIC) || identity[MAGIC.len()..].iter().any(|b|*b!=0){
+    return Err(other("GDB guest mailbox marker mismatch; no memory writes"));
+   }
+   println!("[RUST_LINK] Live WXLM marker verified. Read-only until real Link + Minecraft gameplay.");
+   let mut authenticated=false;
+   let mut last_seq=0u32;
+   let mut last_guest_tick=0u32;
+   let mut last_link:Option<([f64;3],Instant)>=None;
+   let mut last_report=Instant::now()-Duration::from_secs(5);
+   let mut last_tx=Instant::now()-Duration::from_secs(1);
    loop{
-    if load_addr()!=Some(addr){return Err(other("Ryujinx restarted; rejecting stale guest pointer"))}
-    let pkt={
-     let e=state.lock().map_err(|_|other("Rust bridge mutex poisoned"))?;
-     e.mem.bytes(DIRECT,POSE_BYTES)
+    if load_addr()!=Some(addr){return Err(other("Ryujinx restarted; stale mailbox invalidated"))}
+    // Reading guest player XYZ is safe even while BDP1 is disarmed.
+    // This is the ONLY operation on guest memory while in the title screen.
+    if let Some((tick,pos))=read_link(&mut remote,addr)?{
+     if tick!=last_guest_tick{
+      last_guest_tick=tick;
+      last_link=Some((pos,Instant::now()));
+      let mut engine=state.lock().map_err(|_|other("bridge mutex poisoned"))?;
+      engine.command(json!({"type":"pose","x":pos[0],"y":pos[1],"z":pos[2],
+          "yaw":0.0,"pitch":0.0,"world":1}));
+     }
+    }
+    let pose={
+      let engine=state.lock().map_err(|_|other("bridge mutex poisoned"))?;
+      engine.mem.bytes(DIRECT,POSE_BYTES)
     };
-    let seq=u32::from_le_bytes(pkt[..4].try_into().unwrap());
-    if seq&1==0 && seq!=last_seq
-       && u32::from_le_bytes(pkt[4..8].try_into().unwrap())==0x31504442u32 {
-      remote.send(addr,&pkt)?;
-      last_seq=seq;
+    let native_live=last_link.as_ref().is_some_and(|(_,stamp)|stamp.elapsed()<Duration::from_millis(900));
+    let armed=native_live && active_packet(&pose);
+    if armed {
+      if !authenticated{
+       // ONE disabled challenge after Link and Minecraft are both live.
+       // Never challenge repeatedly while loading the title screen.
+       remote.authenticate(addr)?;
+       authenticated=true;
+       last_seq=0;
+       println!("[RUST_LINK] Authenticated; enabling player-frame BDP1 synchronisation");
+      }
+      let seq=u32::from_le_bytes(pose[0..4].try_into().unwrap());
+      if seq!=last_seq{
+       remote.send(addr,&pose)?;
+       last_seq=seq;
+       last_tx=Instant::now();
+      }
+    }else if authenticated{
+      // Send at most ONE disarm if MC stops updating or Link unloads. Never
+      // send tens of thousands of disarmed packets to Ryujinx's GDB writer.
+      let mut off=pose;
+      let seq=u32::from_le_bytes(off[0..4].try_into().unwrap())&!1;
+      off[0..4].copy_from_slice(&seq.to_le_bytes());
+      off[12..16].fill(0);
+      remote.send(addr,&off)?;
+      authenticated=false;
+      last_seq=0;
+      println!("[RUST_LINK] Player inactive; disarmed ONCE. GDB now read-only.");
     }
-    if last_report.elapsed()>=Duration::from_secs(3){
-     let status=remote.read(addr+152,24)?;
-     let at=|n:usize|u32::from_le_bytes(status[n..n+4].try_into().unwrap());
-     let camera=u64::from_le_bytes(status[8..16].try_into().unwrap());
-     println!("[RUST_LINK] guest ACK={} seq={} state={} applied={} warp_method={} camera=0x{:x}",
-       at(0),last_seq,at(4),at(16),at(20),camera);
-     last_report=Instant::now();
+    if last_report.elapsed()>Duration::from_secs(5){
+      println!("[RUST_LINK] link_tick={} LinkTelemetry={} BDP1armed={} writes_active={} TX_age_ms={}",
+        last_guest_tick,native_live,armed,authenticated,last_tx.elapsed().as_millis());
+      last_report=Instant::now();
     }
-    let elapsed=last_tick.elapsed();
-    if elapsed<Duration::from_millis(33){thread::sleep(Duration::from_millis(33)-elapsed);}
-    last_tick=Instant::now();
+    thread::sleep(Duration::from_millis(if armed {33}else{100}));
    }
   })();
-  eprintln!("[RUST_LINK] Safe GDB transport waiting: {}. No speculative memory writes.",result.unwrap_err());
+  eprintln!("[RUST_LINK] Guest transport paused: {}",result.unwrap_err());
   thread::sleep(Duration::from_secs(3));
  }
 }
@@ -159,6 +222,17 @@ mod tests{
   let a="[LAUNCH] RYUJINX_PROCESS: first\n[BOTW_NATIVE] GUEST_MAILBOX=0x000000000b37e000\n";
   assert_eq!(parse_guest_addr(a),Some(0xb37e000));
   assert_eq!(parse_guest_addr(&(a.to_string()+"[LAUNCH] RYUJINX_PROCESS: second\n")),None);
+ }
+ #[test]fn no_disarmed_packet_is_ever_streamed(){
+   let mut p=[0u8;POSE_BYTES];
+   p[0..4].copy_from_slice(&2u32.to_le_bytes());
+   p[4..8].copy_from_slice(&0x31504442u32.to_le_bytes());
+   p[8..12].copy_from_slice(&1u32.to_le_bytes());
+   assert!(!active_packet(&p));
+   p[12..16].copy_from_slice(&0x13u32.to_le_bytes());
+   assert!(active_packet(&p));
+   p[12..16].copy_from_slice(&0x3u32.to_le_bytes());
+   assert!(!active_packet(&p));
  }
  #[test]fn reject_unscoped_and_unaligned(){
   assert_eq!(parse_guest_addr("GUEST_MAILBOX=0x000000000b37e000"),None);
