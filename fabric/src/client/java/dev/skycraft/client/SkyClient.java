@@ -17,12 +17,14 @@ import org.lwjgl.sdl.SDLVideo;
  * thread, called from MinecraftMixin.
  */
 public final class SkyClient {
-	// This branch is the BotwCraft distribution. Legacy SkyCraft rendering
-    // export is unnecessary: Ryujinx already renders Hyrule, while Minecraft
-    // only supplies movement and the hand/HUD. Opt out for Skyrim users.
-    private static final boolean BOTW_NATIVE = Boolean.parseBoolean(
-        System.getProperty("botwcraft.native", "true"));
-    private static final boolean SHOW_WINDOW = Boolean.getBoolean("skycraft.showWindow");
+	// Render-only performance settings for BOTW. No physics, commands, input,
+    // teleport or shared-state semantics are modified from the working V8.
+    // Opt out for a legacy SkyCraft session: -Dbotwcraft.performance=false
+    private static final boolean BOTW_PERFORMANCE =
+        Boolean.parseBoolean(System.getProperty("botwcraft.performance", "true"));
+    private static long nextWorldExportNanos;
+
+	private static final boolean SHOW_WINDOW = Boolean.getBoolean("skycraft.showWindow");
 	// Started by Skyrim (SkyCraft's bundled instance passes -Dskycraft.startHidden=true): no window and
 	// no title-screen music from the first frame, even while Skyrim is paused (Alt-Tabbed) and the
 	// two haven't linked up yet. Otherwise the window only goes once Skyrim is there.
@@ -85,7 +87,7 @@ public final class SkyClient {
 		boolean nowLinked = SkyLink.active();
 		if (nowLinked) {
 			SkyLink.readSkyState(sky); // on a torn read we simply keep last frame's state
-			if (!BOTW_NATIVE) dev.skycraft.world.SkyWater.refresh();
+			dev.skycraft.world.SkyWater.refresh();
 		} else {
 			dev.skycraft.world.SkyWater.clear();
 		}
@@ -95,7 +97,7 @@ public final class SkyClient {
 			if (linked) {
 				tookOver = true;
 				unlinkedHold = null;
-				if (!BOTW_NATIVE) SkyCollision.startConsumer();
+				SkyCollision.startConsumer();
 				applyLinkedOptions();
 			} else {
 				InputBridge.releaseAll();
@@ -116,7 +118,7 @@ public final class SkyClient {
 			InputBridge.releaseAll();
 		}
 		InputBridge.drain(minecraft);
-		if (!BOTW_NATIVE) ProxySync.frame(minecraft);
+		ProxySync.frame(minecraft);
 
 		LocalPlayer player = minecraft.player;
 		if (player == null) {
@@ -189,8 +191,8 @@ public final class SkyClient {
 	/** Called at the end of every client tick. */
 	public static void clientTick(Minecraft minecraft) {
 		MirrorWorld.tick(minecraft);
-		if (!BOTW_NATIVE) DiscordPresence.tick(minecraft);
-		if (!BOTW_NATIVE) SkyDigClient.tick(minecraft);
+		DiscordPresence.tick(minecraft);
+		SkyDigClient.tick(minecraft);
 		freezeWhileUnlinked(minecraft);
 		holdUntilReady(minecraft);
 		publishTick(minecraft);
@@ -255,31 +257,6 @@ public final class SkyClient {
 		mc.walkDist = bob ? avatar.getInterpolatedWalkDistance(1.0F) : 0.0F;
 		mc.bobO = bob ? avatar.getInterpolatedBob(0.0F) : 0.0F;
 		mc.bob = bob ? avatar.getInterpolatedBob(1.0F) : 0.0F;
-        if (BOTW_NATIVE) {
-            // Deliver current Minecraft PHYSICS even when GPU rendering slows.
-            // In the old build only afterRender() refreshed x/y/z/frameCounter.
-            // At 1 FPS, the Rust bridge saw a frozen player and Zelda repeatedly
-            // warped/fell. Client ticks are independent of optional HUD readback.
-            int flags = Proto.MC_IN_WORLD;
-            if (player.onGround()) flags |= Proto.MC_ON_GROUND;
-            if (player.isShiftKeyDown()) flags |= Proto.MC_SNEAKING;
-            if (player.isSprinting()) flags |= Proto.MC_SPRINTING;
-            if (player.isSwimming()) flags |= Proto.MC_SWIMMING;
-            if (player.getAbilities().flying) flags |= Proto.MC_FLYING;
-            if (player.isDeadOrDying()) flags |= Proto.MC_DEAD;
-            if (minecraft.gui.screen() != null) flags |= Proto.MC_SCREEN_OPEN;
-            mc.flags = flags;
-            mc.x = player.getX();
-            mc.y = player.getY();
-            mc.z = player.getZ();
-            mc.yaw = player.getYRot();
-            mc.pitch = player.getXRot();
-            mc.eyeHeight = eyeSmoothed;
-            mc.eyeX = mc.x;
-            mc.eyeY = mc.y + mc.eyeHeight;
-            mc.eyeZ = mc.z;
-            mc.frameCounter = ++frameCounter;
-        }
 		SkyLink.writeMcState(mc);
 	}
 
@@ -289,16 +266,6 @@ public final class SkyClient {
 		if (!linked || player == null) {
 			return;
 		}
-        if (BOTW_NATIVE) {
-            // BOTW does not send Skyrim triangular-collision sections. The
-            // old SkyCraft "wait for three known sections" never completes,
-            // so it traps Steve in an endless setPos + zero-velocity loop.
-            // In BOTW mode the native player/link transform is independent
-            // and Minecraft must tick physics uninterrupted.
-            holdPos = null;
-            holdSince = 0;
-            return;
-        }
 		if (!sky.inGame() || sky.loading()) {
 			// Skyrim is on its main menu or a loading screen: park the player where they are.
 			if (holdPos == null) {
@@ -429,8 +396,16 @@ public final class SkyClient {
 
 		if ((flags & Proto.MC_IN_WORLD) != 0) {
 			try {
-				if (!BOTW_NATIVE)
-					WorldExporter.frame(minecraft, minecraft.getDeltaTracker().getGameTimeDeltaPartialTick(false));
+                // WorldExporter exports chunks/entities into SKYRIM's old
+                // renderer; it can mesh thousands of blocks, and BotwCraft's
+                // separate Ryujinx window has its own Hyrule geometry.
+                // Preserve it (unlike V9), but budget at 10Hz instead of
+                // re-running costly mesh work on EVERY Minecraft render frame.
+                long time = System.nanoTime();
+                if (!BOTW_PERFORMANCE || time >= nextWorldExportNanos) {
+                    nextWorldExportNanos = time + 100_000_000L;
+				    WorldExporter.frame(minecraft, minecraft.getDeltaTracker().getGameTimeDeltaPartialTick(false));
+                }
 			} catch (RuntimeException e) {
 				if (exporterErrors++ < 5) {
 					SkyCraft.LOG.error("SkyCraft: world export failed", e);
@@ -442,12 +417,11 @@ public final class SkyClient {
 
 	/** End of the frame: render at most once per Skyrim frame instead of spinning freely. */
 	public static void paceFrame() {
-        // The SkyCraft original spin-waits up to 25ms for Skyrim to advance
-        // SkyState.seq on every Minecraft render. BotwCraft's Rust host only
-        // updates that state on fresh guest-position events, not every frame:
-        // waiting here causes a permanent frame-rate collapse and late inputs.
-        if (BOTW_NATIVE) return;
-
+        // The original V8 busy-spins up to 25ms for every single render
+        // frame while waiting for SkyState to advance. The BOTW bridge's
+        // SkyState isn't synchronized to Minecraft's render frames, so this
+        // starves Minecraft's UI thread for no gameplay benefit.
+        if (BOTW_PERFORMANCE) return;
 		if (!linked) {
 			return;
 		}
@@ -474,11 +448,11 @@ public final class SkyClient {
 		options.pauseOnLostFocus = false;
 		options.vignette().set(false);
 		options.enableVsync().set(false);
-		options.framerateLimit().set(BOTW_NATIVE ? 75 : 260);
+		options.framerateLimit().set(BOTW_PERFORMANCE ? 60 : 260);
 		// Minecraft doesn't draw the world itself; these only decide how far out placed blocks,
 		// arrows and Skyrim NPC stand-ins stay loaded and simulated.
-		options.renderDistance().set(BOTW_NATIVE ? 4 : 8);
-		options.simulationDistance().set(BOTW_NATIVE ? 4 : 8);
+		options.renderDistance().set(8);
+		options.simulationDistance().set(8);
 		options.autoJump().set(false);
 		options.onboardAccessibility = false;
 		if (options.tutorialStep != net.minecraft.client.tutorial.TutorialSteps.NONE) {
@@ -498,8 +472,8 @@ public final class SkyClient {
 	}
 
 	private static void applyViewportSize(Minecraft minecraft) {
-		int w = Math.min(sky.viewportW, BOTW_NATIVE ? 1920 : Proto.MAX_OVERLAY_W);
-		int h = Math.min(sky.viewportH, BOTW_NATIVE ? 1080 : Proto.MAX_OVERLAY_H);
+		int w = Math.min(sky.viewportW, Proto.MAX_OVERLAY_W);
+		int h = Math.min(sky.viewportH, Proto.MAX_OVERLAY_H);
 		if (w <= 0 || h <= 0 || (w == appliedViewportW && h == appliedViewportH)) {
 			return;
 		}
