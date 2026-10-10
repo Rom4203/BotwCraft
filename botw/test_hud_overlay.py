@@ -1,9 +1,24 @@
 """Validate SkyCraft v11 overlay control/header parser without a GPU."""
 import struct
 import unittest
-from botw.hud_overlay import decode_slot_header, remove_void_background, OFF_HDR
+from botw.hud_overlay import (decode_slot_header, remove_void_background,
+                              is_ryujinx_executable, OFF_HDR)
 
 class OverlayTests(unittest.TestCase):
+    def test_exact_ryujinx_executable_not_browser_title(self):
+        self.assertTrue(is_ryujinx_executable(
+            r"D:\\Jeux\\Ryujinx\\Ryujinx.exe"))
+        self.assertTrue(is_ryujinx_executable(
+            "C:/Emu/Ryujinx.Ava.exe"))
+        for false_app in (
+            r"C:\\Program Files\\Opera\\opera.exe",
+            r"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+            r"D:\\games\\not-ryujinx.exe",
+            "", None, "ChatGPT - Ryujinx - Opera",
+        ):
+            self.assertFalse(is_ryujinx_executable(false_app))
+
+
     def make_read(self, width, height, flags=1, frame=42, slot=1):
         data = bytearray(0x600)
         struct.pack_into("<III", data, OFF_HDR + slot * 64, width, height, flags)
