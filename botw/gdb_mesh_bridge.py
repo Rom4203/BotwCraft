@@ -110,13 +110,13 @@ class RspClient:
         self.sock.sendall(b"\x03")
         return self._reply()
 
-    def write_memory(self, guest_address, packet):
+    def write_memory(self, guest_address, packet, max_packet=MAX_PACKET):
         if not self.stopped:
             raise RspError("writing to a running guest is forbidden")
         if not 0 < guest_address < (1 << 48):
             raise ValueError("bad guest pointer")
-        if len(packet) > MAX_PACKET:
-            raise ValueError("BWC1 packet is larger than the guest buffer")
+        if not (0 < max_packet <= 65536) or len(packet) > max_packet:
+            raise ValueError("packet is larger than the verified guest-owned buffer")
         for offset in range(0, len(packet), CHUNK_BYTES):
             block = packet[offset:offset + CHUNK_BYTES]
             command = f"M{guest_address + offset:x},{len(block):x}:{block.hex()}"
