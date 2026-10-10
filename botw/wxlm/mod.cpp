@@ -57,16 +57,24 @@ struct alignas(16) Mailbox {
     volatile uintptr_t camera_pointer;
     volatile uint32_t applied_sequence;
     volatile uint32_t warp_method;
+    // NX150 live Link coordinates for Rust to READ, without any in-game
+    // debug text parser and without requiring writes to the guest.
+    // Guest offsets: player_tick=176 valid=180 xyz=184..195.
+    volatile uint32_t player_tick;
+    volatile uint32_t player_valid;
+    volatile float player_xyz[3];
 };
 static_assert(offsetof(Mailbox, packet) == 40);
 static_assert(offsetof(Mailbox, acknowledged_seq) == 152);
-static_assert(sizeof(Mailbox) >= 160);
+static_assert(offsetof(Mailbox, player_tick) == 176, "Live Link telemetry ABI drift");
+static_assert(offsetof(Mailbox, player_valid) == 180, "Live Link validity ABI drift");
+static_assert(offsetof(Mailbox, player_xyz) == 184, "Live Link position ABI drift");
 
 extern "C" {
 // Marker must remain in the actual guest .data of this wxlm module.
 // Never conflate it with the unrelated BDP1 symbol in subsdk9.
 __attribute__((used, aligned(16))) Mailbox g_BotwCraftLiveMailbox = {
-    "BOTWCRAFT_WXLM_BDP1_LIVE_20261010", {}, 0, kModuleReady, 0, 0, 0
+    "BOTWCRAFT_WXLM_BDP1_LIVE_20261010", {}, 0, kModuleReady, 0, 0, 0, 0, 0, {0,0,0}
 };
 }
 
@@ -291,6 +299,24 @@ extern "C" __attribute__((used)) void BotwCraftPlayerTick() {
     const uint32_t actor = get ? get() : 0;
     const bool actorReady = actor && valid && valid(actor);
     g_BotwCraftLiveMailbox.runtime_state = actorReady ? kActorSeen : kNoActor;
+    g_BotwCraftLiveMailbox.player_valid = 0;
+    if (actorReady && S::ActorUnsafeRawPointer) {
+        const uintptr_t raw = S::ActorUnsafeRawPointer(actor);
+        // BOTW NX150 Actor::mMtx (matrix 3x4) lives at +0x398.
+        // Matrix column 3 holds XYZ. A live valid ActorHandle is required.
+        if (raw >= 0x10000u && (raw & 7u) == 0) {
+            const volatile float* mtx =
+                reinterpret_cast<const volatile float*>(raw + 0x398u);
+            const float x=mtx[3], y=mtx[7], z=mtx[11];
+            if (finiteFloat(x) && finiteFloat(y) && finiteFloat(z)) {
+                g_BotwCraftLiveMailbox.player_xyz[0]=x;
+                g_BotwCraftLiveMailbox.player_xyz[1]=y;
+                g_BotwCraftLiveMailbox.player_xyz[2]=z;
+                g_BotwCraftLiveMailbox.player_valid=1;
+            }
+        }
+    }
+    g_BotwCraftLiveMailbox.player_tick = s_ticks;
     if (actorReady && !s_loggedPlayer) {
         s_loggedPlayer = true;
         S::Log("[BOTW_NATIVE] Link actor resolved by player tick");
