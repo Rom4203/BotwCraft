@@ -5,6 +5,9 @@ on:
     branches: [botw-native-creative-flight]
     paths:
       - '.github/workflows/botw-source-archive.yml'
+      - 'botw/wxlm/**'
+      - 'botw/rust_bridge/**'
+      - 'botw/patches/**'
 jobs:
   sources:
     runs-on: ubuntu-latest
@@ -13,7 +16,7 @@ jobs:
       - name: Archive ALL custom native and Rust sources
         run: |
           mkdir -p bundle/botw
-          cp -r botw/wxlm botw/rust_bridge botw/native botw/windows bundle/botw/
+          cp -r botw/wxlm botw/rust_bridge botw/native botw/windows botw/patches bundle/botw/
           cp -r .github bundle/
           (cd bundle && zip -qr ../BotwCraft_GitHub_Sources.zip botw .github)
       - uses: actions/upload-artifact@v4
