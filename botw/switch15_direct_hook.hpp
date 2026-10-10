@@ -53,6 +53,7 @@ inline Mailbox gMailbox = [] {
     return m;
 }();
 inline uint32_t gApplied = 0;
+inline uint32_t gCameraApplied = 0;
 inline uint32_t gRefused = 0;
 inline uint32_t gLastSeq = 0;
 inline uint64_t gLastMcFrame = 0;
@@ -166,6 +167,9 @@ WIIXL_HOOK_DEFINE_TRAMPOLINE(FirstPersonCameraHook) {
                                 eye[1]+f[1]*10.f,eye[2]+f[2]*10.f);
                             WiiXLaunch::BotW::Camera::SetUp(
                                 camera,0.f,1.f,0.f);
+                            if ((++gCameraApplied % 120) == 1)
+                                WIIXL_LOG("BotwCraft:DIRECT_FIRST_PERSON_CAMERA_APPLIED frames=%u",
+                                          gCameraApplied);
                         }
                     }
                 }
