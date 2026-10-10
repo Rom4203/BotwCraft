@@ -13,7 +13,7 @@ public abstract class FramerateLimitTrackerMixin {
 	@Inject(method = "getFramerateLimit", at = @At("HEAD"), cancellable = true)
 	private void skycraft$unlimited(CallbackInfoReturnable<Integer> cir) {
 		if (SkyClient.linked()) {
-			cir.setReturnValue(260);
+			cir.setReturnValue(75);
 		}
 	}
 }
