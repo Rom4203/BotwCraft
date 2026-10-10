@@ -1,0 +1,61 @@
+name: BotwCraft experimental native Havok terrain collisions
+on:
+  push:
+    branches: [botw-terrain-collision-experimental-20261010]
+    paths: ['botw/rust_bridge/**','botw/wxlm/**','fabric/src/client/java/dev/skycraft/client/BotwTerrainCollisionBridge.java','.github/workflows/botw-terrain-experimental.yml']
+  workflow_dispatch:
+jobs:
+  build-guest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    container: devkitpro/devkita64:latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: git clone --depth=1 https://github.com/BladesawStudios/WiiXLaunch.git vendor/WiiXLaunch
+      - run: |
+          python3 vendor/WiiXLaunch/sdk/scripts/build_mod.py --source botw/wxlm --target switch --wiixlaunch vendor/WiiXLaunch/sdk --out build-native
+          test -s build-native/switch-mods/bwc_pose.wxlm
+      - uses: actions/upload-artifact@v4
+        with:
+          name: botwcraft-terrain-native-havok-guest
+          path: build-native/switch-mods/bwc_pose.wxlm
+          if-no-files-found: error
+  build-rust:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Verify existing BDP3 protocol and collision ring bridge
+        shell: pwsh
+        working-directory: botw/rust_bridge
+        run: |
+          cargo test --release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo build --release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: botwcraft-terrain-windows-rust
+          path: botw/rust_bridge/target/release/botwcraft-rust-bridge.exe
+          if-no-files-found: error
+  build-fabric-helper:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Build only as a carrier for the new collision helper class
+        working-directory: fabric
+        run: |
+          chmod +x ./gradlew
+          ./gradlew --no-daemon build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: botwcraft-terrain-fabric-helper-carrier
+          path: fabric/build/libs/*-0.1.2.jar
+          if-no-files-found: error
