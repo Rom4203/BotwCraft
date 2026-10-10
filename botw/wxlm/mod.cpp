@@ -135,6 +135,50 @@ static bool rawSwitchSetMtx(uint32_t handle, const float matrix[12],
     return true;
 }
 
+// zeldaret/botw NX150 Actor::mModel +0x4E0, gsys::Model::_88 render scale.
+// This reduces ONLY the model render scale: Link's actor/physics stay alive.
+static uintptr_t s_hiddenModel = 0;
+static uintptr_t s_hiddenActor = 0;
+static float s_previousScale[3] = {1.f,1.f,1.f};
+static bool s_modelWasHidden = false;
+static bool s_loggedModelHide = false;
+
+static bool updateVisualModel(uint32_t handle, bool hide) {
+    if (!S::ActorUnsafeRawPointer) return false;
+    const uintptr_t actor=S::ActorUnsafeRawPointer(handle);
+    if (actor<0x10000 || (actor&7u)) return false;
+    const uintptr_t model=*reinterpret_cast<const volatile uintptr_t*>(actor+0x4e0);
+    if (!model || (model&7u) || model<0x10000) return false;
+    volatile float* scale=reinterpret_cast<volatile float*>(model+0x88);
+    if (!hide) {
+        if (s_modelWasHidden && s_hiddenModel==model &&
+            s_hiddenActor==actor) {
+            for (unsigned i=0;i<3;i++) scale[i]=s_previousScale[i];
+        }
+        s_modelWasHidden=false;
+        s_hiddenModel=0;
+        s_hiddenActor=0;
+        return true;
+    }
+    if (!s_modelWasHidden || s_hiddenModel!=model || s_hiddenActor!=actor) {
+        const float old[]={scale[0],scale[1],scale[2]};
+        for (unsigned i=0;i<3;i++)
+            if (!finiteFloat(old[i]) || old[i]<0.00001f || old[i]>100.f)
+                return false;
+        s_hiddenModel=model;
+        s_hiddenActor=actor;
+        for (unsigned i=0;i<3;i++) s_previousScale[i]=old[i];
+        s_modelWasHidden=true;
+    }
+    // Nonzero scale avoids singular render matrices while making Link invisible.
+    for (unsigned i=0;i<3;i++) scale[i]=0.0001f;
+    if (!s_loggedModelHide) {
+        s_loggedModelHide=true;
+        S::Log("[BOTW_NATIVE] Link model scale suppressed (actor retained)");
+    }
+    return true;
+}
+
 static bool warpLink(uint32_t handle, const Pose& p) {
     for (unsigned i = 0; i < 3; ++i)
         if (!finiteFloat(p.position[i])) return false;
@@ -219,7 +263,10 @@ extern "C" __attribute__((used)) void BotwCraftPlayerTick() {
     // Acknowledge even an unarmed probe so the Windows bridge can prove
     // WHICH of several identically marked guest-memory host mappings is live.
     g_BotwCraftLiveMailbox.acknowledged_seq = p.seq;
-    if ((p.flags & 3u) != 3u || !actorReady) return;
+    if ((p.flags & 3u) != 3u || !actorReady) {
+        if (actorReady) updateVisualModel(actor,false);
+        return;
+    }
     if (p.seq != s_lastSeq) {
         s_lastSeq = p.seq;
         s_lastActiveTick = s_ticks;
@@ -234,16 +281,20 @@ extern "C" __attribute__((used)) void BotwCraftPlayerTick() {
             s_loggedTimeout = true;
             S::Log("[BOTW_NATIVE] Minecraft pose stale: game control disarmed");
         }
+        updateVisualModel(actor,false);
         return;
     }
     // Apply every tick while a fresh Minecraft packet exists, even if
     // the sequence has not changed: BOTW physics may republish transform.
     // The explicit 0x10 opt-in distinguishes active actuator from probing.
     if (!(p.flags & 0x10u)) {
+        updateVisualModel(actor,false);
         g_BotwCraftLiveMailbox.runtime_state = kEngineUnavailable;
         return;
     }
     const bool warped = warpLink(actor,p);
+    const bool hidden = warped && updateVisualModel(actor,true);
+    (void)hidden;
     const bool camera = updateCamera(p);
     g_BotwCraftLiveMailbox.runtime_state =
         warped && camera ? kWarpAndCameraOK : warped ? kWarpOK :
