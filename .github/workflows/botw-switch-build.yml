@@ -10,6 +10,7 @@ on:
       - 'botw/guard_switch_player_hook.py'
       - 'botw/guard_switch_fs.py'
       - 'botw/guard_unknown_switch_build.py'
+      - 'botw/switch15_direct_hook.hpp'
       - 'botw/verify_native_heap.py'
       - 'botw/native_hud_packet.hpp'
       - 'botw/native_hud_bridge.py'
