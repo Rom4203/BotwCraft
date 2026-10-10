@@ -54,6 +54,16 @@ def ryujinx_running():
 
 def main():
     LOG.parent.mkdir(parents=True,exist_ok=True)
+    # Keep one compact log per session. Previous version appended indefinitely:
+    # the earlier Rust transport re-read it 30 times/second, eventually
+    # stealing CPU/memory from Minecraft. Preserve the last log for debugging.
+    if LOG.exists():
+        prior=LOG.with_name("botwcraft.previous.log")
+        try:
+            LOG.replace(prior)
+        except OSError:
+            # A previous program still owns the log; do not erase its data.
+            pass
     log("LAUNCH","="*54)
     log("LAUNCH",f"Rust native BOTW session {datetime.datetime.now().isoformat(timespec='seconds')}")
     if os.name!="nt":
