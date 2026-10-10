@@ -54,6 +54,11 @@ public final class SkyClient {
             return;
         }
         SkyLink.poll();
+        if (BotwCraftSession.compositorInputs() && SkyLink.transportOpen()) {
+            // Actual Minecraft keyboard/mouse handlers, running on its client
+            // thread. No fake SendInput to an unfocused background window.
+            InputBridge.drain(Minecraft.getInstance());
+        }
         telemetryReady = SkyLink.active()
             && SkyLink.readSkyState(observedLink)
             && observedLink.inGame();
