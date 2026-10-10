@@ -30,7 +30,16 @@ public final class SkyCraftClient implements ClientModInitializer {
 					c.getSource().sendFeedback(net.minecraft.network.chat.Component.literal(BotwCraftSession.status()));
 					return 1;
 				}))
-				.then(net.fabricmc.fabric.api.client.command.v2.ClientCommands.literal("hud")
+				.then(net.fabricmc.fabric.api.client.command.v2.ClientCommands.literal("inputs")
+                    .then(net.fabricmc.fabric.api.client.command.v2.ClientCommands.literal("on").executes(c -> {
+                        c.getSource().sendFeedback(net.minecraft.network.chat.Component.literal(BotwCraftSession.setCompositorInputs(true)));
+                        return 1;
+                    }))
+                    .then(net.fabricmc.fabric.api.client.command.v2.ClientCommands.literal("off").executes(c -> {
+                        c.getSource().sendFeedback(net.minecraft.network.chat.Component.literal(BotwCraftSession.setCompositorInputs(false)));
+                        return 1;
+                    })))
+                .then(net.fabricmc.fabric.api.client.command.v2.ClientCommands.literal("hud")
 					.then(net.fabricmc.fabric.api.client.command.v2.ClientCommands.literal("on").executes(c -> {
 						c.getSource().sendFeedback(net.minecraft.network.chat.Component.literal(BotwCraftSession.setHudEnabled(true)));
 						return 1;
