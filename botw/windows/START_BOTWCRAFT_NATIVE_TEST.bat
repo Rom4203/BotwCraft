@@ -1,25 +1,17 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-echo BOTWCRAFT - Nintendo BOTW 1.5.0 direct native Rust test
+echo BOTWCRAFT - Nintendo BOTW 1.5.0 native Rust test
 echo =====================================================
-echo [1] Installing the experimental WiiXLaunch module alongside the working mod...
-if exist "D:\\Program Files\\Python\\python.exe" (
-  set "PY=\"D:\\Program Files\\Python\\python.exe\""
-) else (
-  where py >nul 2>nul
-  if not errorlevel 1 (
-    set "PY=py -3"
-  ) else (
-    set "PY=python"
-  )
-)
-%PY% install_native_experimental.py
+echo [1] Installing the experimental WiiXLaunch module...
+set "PYTHON_EXE=python"
+if exist "D:\Program Files\Python\python.exe" set "PYTHON_EXE=D:\Program Files\Python\python.exe"
+"%PYTHON_EXE%" install_native_experimental.py
 if errorlevel 1 (
-  echo [BOTWCRAFT] Could not install native module. Nothing was launched.
+  echo [BOTWCRAFT] Native installation failed. Ryujinx was not started.
   pause
   exit /b 1
 )
-echo [2] Starting Rust bridge, Ryujinx log relay and third Rust compositor...
-%PY% bridge\start_all_rust.py
+echo [2] Starting Rust bridge, Ryujinx log relay and Rust game window...
+"%PYTHON_EXE%" bridge\start_all_rust.py
 pause
