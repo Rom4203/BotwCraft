@@ -56,7 +56,8 @@ fn main(){
    loop{
     if let Ok(mut engine)=ticker.lock(){engine.tick();}
     else {eprintln!("[RUST_BRIDGE] Sync state poisoned; stopping producer");return}
-    thread::sleep(Duration::from_micros(16_667));
+    // Sample Minecraft's latest state at up to 120 Hz; Zelda still renders at 30.
+    thread::sleep(Duration::from_micros(8_333));
    }
   })?;
   let server=TcpListener::bind(("127.0.0.1",39847))?;
