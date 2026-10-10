@@ -11,6 +11,7 @@
 
 namespace S {
 WXL_USE_wiixl_core(Log);
+WXL_USE_wiixl_core(ImageBase);
 WXL_USE_botw_player(Init);
 WXL_USE_botw_player(RegisterTick);
 WXL_USE_botw_player(GetPlayerActor);
@@ -75,11 +76,63 @@ static bool s_loggedPose = false;
 static bool s_loggedTimeout = false;
 static bool s_loggedWarp = false;
 static bool s_loggedCamera = false;
+static bool s_confirmedActorLayout = false;
+static uintptr_t s_confirmedActor = 0;
+
 
 // These callbacks must execute in-game on the player tick; there is no
 // controller emulation and no host-side guessing of physical actor offsets.
 static bool finiteFloat(float x) {
     return x == x && x > -100000.f && x < 100000.f;
+}
+
+// BOTW NX150 decomp (zeldaret/botw, actActor.h) confirms:
+// BaseProc is 0x180, Actor primary vptr is at +0x0;
+// Actor::mMtx is +0x398, with positions at floats 3/7/11;
+// Actor virtual #85 is setMtx. The Wii U implementation uses the
+// (Actor*, Matrix34f*, bool updateActorMtx, bool refreshPhysics) ABI.
+// This Switch vtable invocation is experimental until Ryujinx verifies it.
+static bool rawSwitchSetMtx(uint32_t handle, const float matrix[12],
+                            const Pose& packet) {
+    if (!S::ActorUnsafeRawPointer || !S::ImageBase) return false;
+    const uintptr_t actor = S::ActorUnsafeRawPointer(handle);
+    const uintptr_t base = S::ImageBase();
+    if (actor < 0x10000 || (actor & 7u) || base < 0x10000) return false;
+    if (s_confirmedActorLayout && s_confirmedActor != actor) {
+        s_confirmedActorLayout = false;
+        s_confirmedActor = 0;
+    }
+    // First check against *live* Link telemetry and the exact decompiled
+    // NX150 Actor matrix layout, rather than blindly following vtable data.
+    if (!s_confirmedActorLayout) {
+        const volatile float* current =
+            reinterpret_cast<volatile const float*>(actor + 0x398);
+        const float mx = current[3], my = current[7], mz = current[11];
+        const float dx = mx-packet.botw_origin[0];
+        const float dy = my-packet.botw_origin[1];
+        const float dz = mz-packet.botw_origin[2];
+        if (!finiteFloat(mx) || !finiteFloat(my) || !finiteFloat(mz) ||
+            dx*dx+dy*dy+dz*dz > 256.f) return false;
+        s_confirmedActorLayout = true;
+        s_confirmedActor = actor;
+        S::Log("[BOTW_NATIVE] NX150 Actor +0x398 matrix validated against Link telemetry");
+    }
+    const uintptr_t vtable = *reinterpret_cast<const volatile uintptr_t*>(actor);
+    // Nintendo NX main NSO text/rodata, no guest heap or unrelated mod pointer.
+    if (vtable < base + 0x1000 || vtable >= base+0x10000000u ||
+        (vtable & 7u)) return false;
+    const volatile uintptr_t* vt =
+        reinterpret_cast<const volatile uintptr_t*>(vtable);
+    constexpr unsigned kSetMtxVirtualIndex = 85;
+    const uintptr_t fn = vt[kSetMtxVirtualIndex];
+    const uintptr_t next = vt[kSetMtxVirtualIndex+1];
+    if (fn < base+0x1000 || fn >= base+0x10000000u ||
+        next < base+0x1000 || next >= base+0x10000000u ||
+        (fn & 3u)) return false;
+    using SetMtx = void (*)(void*, const float*, uint32_t, uint32_t);
+    reinterpret_cast<SetMtx>(fn)(reinterpret_cast<void*>(actor),matrix,1u,0u);
+    g_BotwCraftLiveMailbox.warp_method=3;
+    return true;
 }
 
 static bool warpLink(uint32_t handle, const Pose& p) {
@@ -112,7 +165,9 @@ static bool warpLink(uint32_t handle, const Pose& p) {
         g_BotwCraftLiveMailbox.warp_method = 2;
         return true;
     }
-    return false;
+    // The public actor API is not implemented on Switch; fall back to the
+    // NX150 in-game actor vtable, guarded by live position/matrix validation.
+    return rawSwitchSetMtx(handle,mat,p);
 }
 
 static bool updateCamera(const Pose& p) {
