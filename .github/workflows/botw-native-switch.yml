@@ -1,0 +1,28 @@
+name: BOTW Switch native module
+on:
+  push:
+    branches: [botw-native-creative-flight]
+    paths:
+      - 'botw/wxlm/**'
+      - '.github/workflows/botw-native-switch.yml'
+  workflow_dispatch:
+jobs:
+  build-switch:
+    runs-on: ubuntu-latest
+    container:
+      image: devkitpro/devkita64:latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download WiiXLaunch SDK
+        run: git clone --depth=1 https://github.com/BladesawStudios/WiiXLaunch.git vendor/WiiXLaunch
+      - name: Compile aarch64 WXLM module
+        run: |
+          python3 vendor/WiiXLaunch/sdk/scripts/build_mod.py \
+            --source botw/wxlm --target switch \
+            --wiixlaunch vendor/WiiXLaunch/sdk --out build-native
+      - name: Upload compiled module
+        uses: actions/upload-artifact@v4
+        with:
+          name: botwcraft-direct-switch-experimental
+          path: build-native/switch-mods/botwcraft_direct.wxlm
+          if-no-files-found: error
