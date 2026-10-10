@@ -1,0 +1,29 @@
+name: BotwCraft test20 responsive 120Hz bridge BDP3
+on:
+  push:
+    branches: [botw-test20-responsive60-20261010]
+    paths:
+      - 'botw/rust_bridge/**'
+      - '.github/workflows/botw-test20-low-latency60.yml'
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Verify BDP3 guest protocol and build
+        working-directory: botw/rust_bridge
+        shell: pwsh
+        run: |
+          cargo test --release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo build --release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Upload matched Windows bridge
+        uses: actions/upload-artifact@v4
+        with:
+          name: botw-test20-responsive120-bdp3-bridge
+          path: botw/rust_bridge/target/release/botwcraft-rust-bridge.exe
+          if-no-files-found: error
