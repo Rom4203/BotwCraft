@@ -28,6 +28,10 @@ if defined BOTWCRAFT_HUD_OVERLAY (
  set "BOTWCRAFT_EXTRA=--hud-overlay"
  echo [BotwCraft] HUD Minecraft reel : superposition Win32 sur Ryujinx, sans focus.
 )
+if defined BOTWCRAFT_NATIVE_HUD_PORT (
+ set "BOTWCRAFT_EXTRA=!BOTWCRAFT_EXTRA! --native-hud-port !BOTWCRAFT_NATIVE_HUD_PORT!"
+ echo [BotwCraft] HUD Minecraft reel : premier rendu natif NVN Zelda, port !BOTWCRAFT_NATIVE_HUD_PORT!
+)
 if defined BOTWCRAFT_WORLD_GDB_PORT (
  set "BOTWCRAFT_EXTRA=!BOTWCRAFT_EXTRA! --world-gdb-port !BOTWCRAFT_WORLD_GDB_PORT!"
  echo [BotwCraft] BWC2 Hyrule world geometry GDB port !BOTWCRAFT_WORLD_GDB_PORT!
