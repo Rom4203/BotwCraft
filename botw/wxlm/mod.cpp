@@ -425,7 +425,7 @@ static uint32_t poseCrc(const Pose& pose) {
 }
 static bool readCrcSlot(Pose& out,unsigned slot) {
     if (!readPoseBytes(out,g_BotwCraftLiveMailbox.fast[slot]))return false;
-    return out.seq!=0 && out.reserved_tail[0]==poseCrc(out);
+    return out.seq!=0 && out.tail[0]==poseCrc(out);
 }
 static bool readPacket(Pose& out) {
     for(unsigned attempt=0;attempt<6;attempt++){
