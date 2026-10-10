@@ -31,6 +31,7 @@ impl Remote{
  fn connect()->io::Result<Self>{
   let address=SocketAddr::from(([127,0,0,1],22225));
   let socket=TcpStream::connect_timeout(&address,Duration::from_secs(1))?;
+  socket.set_nodelay(true)?; // prevent Nagle/ACK delays in small GDB packets
   socket.set_read_timeout(Some(Duration::from_secs(3)))?;
   socket.set_write_timeout(Some(Duration::from_secs(3)))?;
   let mut r=Self{stream:socket};
@@ -139,81 +140,120 @@ fn active_packet(packet:&[u8])->bool{
  let flags=u32::from_le_bytes(packet[12..16].try_into().unwrap());
  seq!=0 && seq&1==0 && magic==0x31504442 && version==1 && (flags&0x13)==0x13
 }
+// BDP2: write a COMPLETE pose to the inactive slot and then atomically
+// publish the 4-byte selector. Two GDB round trips, no seqlock busy-loop,
+// and the game frame can always read a stable pose while we write the next.
+const FAST_SEL:usize=204;
+const FAST_SLOT_0:usize=208;
+const FAST_SLOT_1:usize=320;
+fn publish_fast(remote:&mut Remote,addr:usize,packet:&[u8],selected:&mut u32)->io::Result<()>{
+    if !active_packet(packet) &&
+       packet[12..16]!=[0u8;4] {return Err(other("Invalid outgoing pose flags"))}
+    let next=if *selected==1 {2u32} else {1u32};
+    let offset=if next==1 {FAST_SLOT_0}else{FAST_SLOT_1};
+    remote.write(addr+offset,packet)?;
+    remote.write(addr+FAST_SEL,&next.to_le_bytes())?;
+    *selected=next;
+    Ok(())
+}
+fn materially_changed(a:&[u8],b:&[u8])->bool{
+    // Compare inputs that affect the Zelda image (pos, eye, forward,
+    // yaw, pitch) but IGNORE frame counter / clock / unused origins.
+    a[12..16]!=b[12..16] || a[32..76]!=b[32..76]
+}
 pub fn transport_loop(state:Arc<Mutex<Engine>>){
  loop{
   let result=(||->io::Result<()>{
    let addr=load_addr().ok_or_else(||other("Awaiting current Ryujinx guest mailbox"))?;
    let mut remote=Remote::connect()?;
-   // Read-only identity check: don't write probe packets when the game is
-   // still loading or standing in a menu without an actor.
+   // No process-memory search, and crucially no re-reading and allocating
+   // the ENTIRE growing multi-megabyte log on every 60 Hz frame.
    let identity=remote.read(addr,MARKER_BYTES)?;
    if !identity.starts_with(MAGIC) || identity[MAGIC.len()..].iter().any(|b|*b!=0){
     return Err(other("GDB guest mailbox marker mismatch; no memory writes"));
    }
-   println!("[RUST_LINK] Live WXLM marker verified. Read-only until real Link + Minecraft gameplay.");
+   println!("[RUST_LINK] Guest mailbox matched; read-only until Zelda and Minecraft are active.");
    let mut authenticated=false;
-   let mut last_seq=0u32;
+   let mut selected=0u32;
    let mut last_guest_tick=0u32;
    let mut last_link:Option<([f64;3],Instant)>=None;
    let mut last_report=Instant::now()-Duration::from_secs(5);
+   let mut last_read=Instant::now()-Duration::from_secs(1);
    let mut last_tx=Instant::now()-Duration::from_secs(1);
+   let mut last_pose:Option<[u8;POSE_BYTES]>=None;
+   let mut latency_sum=0u128;
+   let mut latency_count=0u64;
    loop{
-    if load_addr()!=Some(addr){return Err(other("Ryujinx restarted; stale mailbox invalidated"))}
-    // Reading guest player XYZ is safe even while BDP1 is disarmed.
-    // This is the ONLY operation on guest memory while in the title screen.
-    if let Some((tick,pos))=read_link(&mut remote,addr)?{
-     if tick!=last_guest_tick{
-      last_guest_tick=tick;
-      last_link=Some((pos,Instant::now()));
-      let mut engine=state.lock().map_err(|_|other("bridge mutex poisoned"))?;
-      engine.command(json!({"type":"pose","x":pos[0],"y":pos[1],"z":pos[2],
-          "yaw":0.0,"pitch":0.0,"world":1}));
-     }
+    // Player XYZ is sampled every 100ms, NOT at every transmitted Minecraft
+    // frame. That avoids a 4th GDB roundtrip on the critical camera path.
+    if last_read.elapsed()>=Duration::from_millis(100){
+      if let Some((tick,pos))=read_link(&mut remote,addr)?{
+       if tick!=last_guest_tick{
+        last_guest_tick=tick;
+        last_link=Some((pos,Instant::now()));
+        let mut engine=state.lock().map_err(|_|other("bridge mutex poisoned"))?;
+        engine.command(json!({"type":"pose","x":pos[0],"y":pos[1],"z":pos[2],
+            "yaw":0.0,"pitch":0.0,"world":1}));
+       }
+      }
+      last_read=Instant::now();
     }
     let pose={
       let engine=state.lock().map_err(|_|other("bridge mutex poisoned"))?;
-      engine.mem.bytes(DIRECT,POSE_BYTES)
+      let raw=engine.mem.bytes(DIRECT,POSE_BYTES);
+      let mut out=[0u8;POSE_BYTES];out.copy_from_slice(&raw);out
     };
     let native_live=last_link.as_ref().is_some_and(|(_,stamp)|stamp.elapsed()<Duration::from_millis(900));
     let armed=native_live && active_packet(&pose);
     if armed {
       if !authenticated{
-       // ONE disabled challenge after Link and Minecraft are both live.
-       // Never challenge repeatedly while loading the title screen.
+       // The legacy mailbox probe stays as a one-time handshake.
+       // Reset to legacy before authenticating if another bridge was used.
+       remote.write(addr+FAST_SEL,&0u32.to_le_bytes())?;
        remote.authenticate(addr)?;
        authenticated=true;
-       last_seq=0;
-       println!("[RUST_LINK] Authenticated; enabling player-frame BDP1 synchronisation");
+       selected=0;
+       last_pose=None;
+       println!("[RUST_LINK] Authenticated; BDP2 60 Hz double-buffer mode");
       }
-      let seq=u32::from_le_bytes(pose[0..4].try_into().unwrap());
-      if seq!=last_seq{
-       remote.send(addr,&pose)?;
-       last_seq=seq;
+      let change=last_pose.as_ref().is_none_or(|p|materially_changed(p,&pose));
+      // Keepalive even while still, so native stale detection can disarm.
+      let refresh=last_tx.elapsed()>=Duration::from_millis(300);
+      if change || refresh{
+       let started=Instant::now();
+       publish_fast(&mut remote,addr,&pose,&mut selected)?;
+       latency_sum+=started.elapsed().as_micros();
+       latency_count+=1;
+       last_pose=Some(pose);
        last_tx=Instant::now();
       }
-    }else if authenticated{
-      // Send at most ONE disarm if MC stops updating or Link unloads. Never
-      // send tens of thousands of disarmed packets to Ryujinx's GDB writer.
-      let mut off=pose;
-      let seq=u32::from_le_bytes(off[0..4].try_into().unwrap())&!1;
-      off[0..4].copy_from_slice(&seq.to_le_bytes());
-      off[12..16].fill(0);
-      remote.send(addr,&off)?;
-      authenticated=false;
-      last_seq=0;
-      println!("[RUST_LINK] Player inactive; disarmed ONCE. GDB now read-only.");
+    } else if authenticated {
+       // Exactly one disarm is sent through BDP2, not to an unused
+       // legacy slot. Then stop writing while Minecraft is inactive.
+       let mut off=pose;
+       let seq=u32::from_le_bytes(off[0..4].try_into().unwrap())&!1;
+       off[0..4].copy_from_slice(&seq.to_le_bytes());
+       off[12..16].fill(0);
+       publish_fast(&mut remote,addr,&off,&mut selected)?;
+       authenticated=false;
+       last_pose=None;
+       println!("[RUST_LINK] Disarmed once. Read-only until active input.");
     }
-    if last_report.elapsed()>Duration::from_secs(5){
+    if last_report.elapsed()>=Duration::from_secs(5){
       let status=remote.read(addr+196,8).unwrap_or_default();
       let (fps,hidden)=if status.len()==8{
         (u32::from_le_bytes(status[0..4].try_into().unwrap()),
          u32::from_le_bytes(status[4..8].try_into().unwrap()))
       }else{(0,0)};
-      println!("[RUST_LINK] link_tick={} LinkTelemetry={} BDP1armed={} writes_active={} TX_age_ms={} FPS_MATRIX_FRAMES={} LINK_HIDDEN={}",
-        last_guest_tick,native_live,armed,authenticated,last_tx.elapsed().as_millis(),fps,hidden);
+      let mean=if latency_count>0{latency_sum/latency_count as u128}else{0};
+      println!("[RUST_LINK] LinkTick={} FPS_MATRIX_FRAMES={} LINK_HIDDEN={} active={} BDP2_rtt_us={} samples={} still_refresh=300ms",
+         last_guest_tick,fps,hidden,armed,mean,latency_count);
+      latency_sum=0;latency_count=0;
       last_report=Instant::now();
     }
-    thread::sleep(Duration::from_millis(if armed {33}else{100}));
+    // The stream uses the most recent Minecraft pose, never a queue of
+    // past frames. 2ms poll is low overhead; GDB requests self-throttle.
+    thread::sleep(Duration::from_millis(if armed{2}else{60}));
    }
   })();
   eprintln!("[RUST_LINK] Guest transport paused: {}",result.unwrap_err());
@@ -238,6 +278,13 @@ mod tests{
    assert!(active_packet(&p));
    p[12..16].copy_from_slice(&0x3u32.to_le_bytes());
    assert!(!active_packet(&p));
+ }
+ #[test]fn material_change_ignores_frame_counter_but_not_camera(){
+   let a=[0u8;POSE_BYTES];
+   let mut b=a;
+   b[16]=1;
+   assert!(!materially_changed(&a,&b));
+   b[32]=1;assert!(materially_changed(&a,&b));
  }
  #[test]fn reject_unscoped_and_unaligned(){
   assert_eq!(parse_guest_addr("GUEST_MAILBOX=0x000000000b37e000"),None);
