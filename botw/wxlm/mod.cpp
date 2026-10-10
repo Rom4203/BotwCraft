@@ -14,9 +14,8 @@ namespace S {
 WXL_USE_wiixl_core(Log);
 WXL_USE_wiixl_call(ImageBase);
 WXL_USE_wiixl_call(ResolveTarget);
-WXL_USE_wiixl_core(InstallHook);
+WXL_USE_wiixl_core(RegisterTick);
 WXL_USE_botw_player(Init);
-WXL_USE_botw_player(RegisterTick);
 WXL_USE_botw_player(GetPlayerActor);
 WXL_USE_botw_player(ActorIsValid);
 WXL_USE_botw_player(ActorUnsafeRawPointer);
@@ -249,86 +248,44 @@ static bool readPacket(Pose& out) {
     return false;
 }
 
-// NX150 from zeldaret/botw/data/uking_functions.csv:
-// 0x7100B1BE7C sead::LookAtCamera::doUpdateMatrix(Matrix34f*) const.
-// The 432-byte method is invoked to produce the camera matrix. Hook here,
-// rather than a 2-instruction CameraMgr getter that cannot be safely patched.
-using CameraMatrixFn = void (*)(void* camera, void* matrixOut);
-static CameraMatrixFn s_nextCameraMatrix = nullptr;
-static bool s_cameraHookInstalled = false;
-static bool s_cameraHookActive = false;
-static bool s_cameraHookLogged = false;
-
-extern "C" __attribute__((used)) void BotwCraftCameraMatrixHook(
-    void* camera, void* matrixOut) {
-    // The native camera hook is run by Zelda, not by the Windows host.
-    // All reads are from the guest mailbox using the packet seqlock.
-    if (camera && s_cameraHookInstalled && s_lastSeq &&
-        s_ticks >= s_lastActiveTick && s_ticks-s_lastActiveTick <= 2u) {
-        Pose p{};
-        if (readPacket(p) && p.seq==s_lastSeq && 
-            (p.flags & 0x13u)==0x13u) {
-            // This callback can be invoked for scene, map, and other cameras.
-            // Only move a real gameplay camera already near the Link actor.
-            const uintptr_t ptr=reinterpret_cast<uintptr_t>(camera);
-            if ((ptr&7u)==0 && ptr >= 0x10000u) {
-                const volatile float* cameraPos =
-                    reinterpret_cast<const volatile float*>(ptr+0x38);
-                const float x=cameraPos[0], y=cameraPos[1], z=cameraPos[2];
-                if (finiteFloat(x) && finiteFloat(y) && finiteFloat(z)) {
-                    const float dx=x-p.position[0];
-                    const float dy=y-p.position[1];
-                    const float dz=z-p.position[2];
-                    // 50-block threshold allows Zelda follow camera offsets,
-                    // but avoids overriding distant scripted/cutscene cameras.
-                    if (dx*dx + dy*dy + dz*dz < 2500.f) {
-                        g_BotwCraftLiveMailbox.camera_pointer=ptr;
-                        if (updateCamera(p)) {
-                            s_cameraHookActive=true;
-                            if (!s_cameraHookLogged) {
-                                S::Log("[BOTW_NATIVE] FIRST_PERSON camera matrix overridden by Minecraft");
-                                s_cameraHookLogged=true;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    // Recompute Zelda's actual native projection/view matrix *after* applying
-    // Minecraft's eye/forward so the third Rust window sees first person.
-    auto original=s_nextCameraMatrix;
-    if (original) original(camera,matrixOut);
+// Crash investigation 2026-10-10:
+// Do NOT install an AArch64 prologue hook during Ryujinx boot.
+// The previous LookAtCamera::doUpdateMatrix trampoline was installed in
+// the crashing sessions even though BDP1 had NEVER been armed.
+//
+// Instead ask BOTW itself for the active LookAtCamera after a valid packet.
+// NX150 symbol: cam::getLookAtCamera at 0x0131e194, main-NSO-relative.
+// Return type is derived from CameraMgr::getLookAtCamera and is still
+// experimental, so no native calls happen until genuine guest ACK and pose.
+static bool updateCameraFromGame(const Pose& p) {
+    if (!S::ResolveTarget || !(p.flags & 0x10u)) return false;
+    using GetGameplayCamera = uintptr_t (*)();
+    const uintptr_t target = S::ResolveTarget(0x0131e194u, 0);
+    if (!target || (target&3u)) return false;
+    const uintptr_t camera=reinterpret_cast<GetGameplayCamera>(target)();
+    if (camera < 0x10000u || (camera&7u)) return false;
+    // These offsets come from WiiXLaunch botw.game::Camera for Switch:
+    // +0x38 pos, +0x44 lookAt, +0x50 up.
+    g_BotwCraftLiveMailbox.camera_pointer=camera;
+    const bool ok=updateCamera(p);
+    return ok;
 }
 
-static void installFirstPersonHook() {
-    if (!S::ImageBase || !S::InstallHook) {
-        S::Log("[BOTW_NATIVE] Camera hook unavailable: wiixl.core missing");
-        return;
+static void printGuestMailboxAddress() {
+    char line[]="[BOTW_NATIVE] GUEST_MAILBOX=0x0000000000000000";
+    uintptr_t value=reinterpret_cast<uintptr_t>(&g_BotwCraftLiveMailbox);
+    const char* hex="0123456789abcdef";
+    constexpr unsigned start=sizeof(line)-1-16;
+    for (unsigned i=0;i<16;i++) {
+        const unsigned shift=(15-i)*4;
+        line[start+i]=hex[(value>>shift)&15u];
     }
-    constexpr uintptr_t kLookAtCameraMatrixNX150 = 0x00B1BE7Cu;
-    if (!S::ResolveTarget) return;
-    const uintptr_t image=S::ImageBase();
-    if (image<0x10000u || (image&0xfffu)) {
-        S::Log("[BOTW_NATIVE] Camera hook refused: image base unexpected");
-        return;
-    }
-    // wiixl.call performs the Switch relocation correctly. wiixl.core
-    // ImageBase() RETURNS ZERO on Switch and must not be used here.
-    const uintptr_t target=S::ResolveTarget(kLookAtCameraMatrixNX150,0);
-    const uintptr_t orig=S::InstallHook(target,
-        reinterpret_cast<uintptr_t>(&BotwCraftCameraMatrixHook));
-    if (!orig) {
-        S::Log("[BOTW_NATIVE] Camera hook refused: BOTW NX150 target conflict");
-        return;
-    }
-    s_nextCameraMatrix=reinterpret_cast<CameraMatrixFn>(orig);
-    s_cameraHookInstalled=true;
-    S::Log("[BOTW_NATIVE] Zelda LookAtCamera matrix hook installed for first-person");
+    S::Log(line);
 }
 
 extern "C" __attribute__((used)) void BotwCraftPlayerTick() {
     ++s_ticks;
+    if (s_ticks==1u) S::Log("[BOTW_NATIVE] CORE_FRAME_TICK_RUNNING");
     auto get = S::GetPlayerActor;
     auto valid = S::ActorIsValid;
     const uint32_t actor = get ? get() : 0;
@@ -376,7 +333,7 @@ extern "C" __attribute__((used)) void BotwCraftPlayerTick() {
     const bool warped = warpLink(actor,p);
     const bool hidden = warped && updateVisualModel(actor,true);
     (void)hidden;
-    const bool camera = updateCamera(p);
+    const bool camera = updateCameraFromGame(p);
     g_BotwCraftLiveMailbox.runtime_state =
         warped && camera ? kWarpAndCameraOK : warped ? kWarpOK :
         camera ? kCameraOK : kEngineUnavailable;
@@ -394,10 +351,13 @@ extern "C" __attribute__((used)) void BotwCraftPlayerTick() {
 extern "C" __attribute__((used)) void WiiXLaunch_ModEntry() {
     if (!S::Log || !S::Init || !S::RegisterTick) return;
     S::Init();
+    printGuestMailboxAddress();
+    // On Switch WiiXLaunch logs "Player: disabled unverified Switch player tick
+    // hook"; registering botw.player does not dispatch any callback.
+    // wiixl.core is driven by the already-confirmed NVN frame instead.
     if (!S::RegisterTick(&BotwCraftPlayerTick)) {
-        S::Log("[BOTW_NATIVE] ERROR: player tick registration refused");
+        S::Log("[BOTW_NATIVE] ERROR: core frame tick registration refused");
         return;
     }
-    installFirstPersonHook();
-    S::Log("[BOTW_NATIVE] Live mailbox and native Link + first-person camera hooks ready");
+    S::Log("[BOTW_NATIVE] core frame tick registered, camera prologue untouched");
 }
