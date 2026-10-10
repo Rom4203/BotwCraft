@@ -1,0 +1,23 @@
+name: BotwCraft full source archive
+on:
+  workflow_dispatch:
+  push:
+    branches: [botw-native-creative-flight]
+    paths:
+      - '.github/workflows/botw-source-archive.yml'
+jobs:
+  sources:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Archive ALL custom native and Rust sources
+        run: |
+          mkdir -p bundle/botw
+          cp -r botw/wxlm botw/rust_bridge botw/native botw/windows bundle/botw/
+          cp -r .github bundle/
+          (cd bundle && zip -qr ../BotwCraft_GitHub_Sources.zip botw .github)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BotwCraft-All-GitHub-Sources
+          path: BotwCraft_GitHub_Sources.zip
+          if-no-files-found: error
