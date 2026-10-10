@@ -273,3 +273,52 @@ as a non-activating display surface while Minecraft keeps SDL focus,
 with carefully isolated BOTW action key mappings. Do not let both
 windows process the same keyboard/mouse events. Savegame backups
 recommended before all experimental native Switch updates.
+
+NEW: HUD TARGET WINDOW FIX (2026-10-10)
+--------------------------------------
+The old hud_overlay.py incorrectly selected ANY visible window whose title
+contained "Ryujinx". A browser tab named ChatGPT - Ryujinx therefore
+attracted the HUD, even when it was not a game. The new selector queries
+each window owner's actual process executable by PID, and only accepts
+Ryujinx.exe / Ryujinx.Ava.exe. It hides whenever Ryujinx loses foreground
+so it cannot cover Opera/Discord/other programs. Per-monitor DPI scaling
+and up to 60 Hz tracking are enabled. No BOTW installation is needed for
+this Windows-only correction: replace bridge/hud_overlay.py and restart
+START_HUD_BRIDGE.bat.
+
+The legacy "Skyrim destruction: On" menu entry is also REMOVED from the
+new Minecraft Fabric build because Zelda terrain destruction was deferred.
+
+OPTIONAL NEW NATIVE NVN HUD FIRST-TEXTURE EXPERIMENT (STATIC)
+------------------------------------------------------------
+This is different from and NOT an alternative animated HUD release.
+The goal is to prove real Minecraft HUD pixels can be displayed through
+WiiXLaunch botw.gfx.CreateTexture/DrawSprite inside Zelda's own NVN
+render call, rather than a Windows layered window.
+
+1. Back up BOTW saves; stop games and bridge.
+2. Run INSTALL_NATIVE_TEST.bat from THIS bundle to install the NEW .wxlm
+   containing BotwCraftHud::BWH1 guest-owned heap buffer. If Core::Alloc
+   cannot supply 36896 bytes the module logs NATIVE_HUD_BUFFER_ALLOC_FAILED
+   and falls back to safe legacy rendering.
+3. Enable Ryujinx's local GDB stub on port 22225, and make sure
+   ryujinx-log-path.txt is a fresh LIVE 1.5.0 log.
+4. Launch Minecraft with the new SkyCraft Fabric JAR. Open your existing
+   world and type /botwcraft connect, then /botwcraft hud on.
+5. Start START_NATIVE_HUD.bat INSTEAD OF START_HUD_BRIDGE.bat.
+   The Python writer waits for BotwCraft:NATIVE_HUD_BUFFER_ADDR,
+   copies ONE true Minecraft GPU RGBA frame, downsamples to 128x72,
+   and writes exactly 36896 bytes via localhost Ryujinx GDB.
+6. Zelda's .wxlm validates the magic, width, frame sequence and FNV
+   checksum before creating ONE native NVN texture and drawing the sprite.
+   Look for "BotwCraft:NATIVE_HUD_TEXTURE_CREATED". The image will remain
+   STATIC even when Minecraft menus change: host gfx v1.1 exposes creation,
+   NOT a dynamic UpdateTexture. Dynamic texture streaming is the next
+   work item, not implemented by creating textures repeatedly.
+7. If GDB or the native texture path crashes, restore the previous
+   known-good module backup. Do not install experimental modules without
+   backups; no game saves are intentionally written by this bridge.
+
+For a smooth, animated working HUD RIGHT NOW, use START_HUD_BRIDGE.bat,
+which is an external Windows compositor, not an actual NVN texture.
+Never run both launchers simultaneously.
