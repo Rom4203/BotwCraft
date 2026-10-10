@@ -52,6 +52,18 @@ class NativeHudTests(unittest.TestCase):
                             "BotwCraft:NATIVE_HUD_CAPACITY=36896\n")
             self.assertIsNone(hud.current_native_hud_mailbox(file))
 
+    def test_hud_guest_reports_actual_heap_failure_not_missing_minecraft(self):
+        with TemporaryDirectory() as folder:
+            path = Path(folder) / "live.log"
+            path.write_text(gdb.VERSION + "\\n"
+                "Arena: botwcraft granted=65536 (64 KB)\\n"
+                "Arena: botwcraft wanted 36896 bytes and has 52912 of 65536 used\\n"
+                "BotwCraft:NATIVE_HUD_BUFFER_ALLOC_FAILED\\n")
+            self.assertTrue(hud.hud_allocation_failure(path))
+            path.write_text("Game: build 0x6811B941\\n"
+                "BotwCraft:NATIVE_HUD_BUFFER_ALLOC_FAILED\\n")
+            self.assertFalse(hud.hud_allocation_failure(path))
+
     def test_invalid_rgba_rejected(self):
         with self.assertRaises(ValueError):
             hud.downsample_rgba(128,72,False,b"not RGBA")
