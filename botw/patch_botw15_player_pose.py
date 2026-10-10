@@ -16,6 +16,8 @@ ROOT = Path(__file__).resolve().parent.parent
 HOST = ROOT / "WiiXLaunch"
 MAIN = HOST / "src" / "main.cpp"
 HEADER = HOST / "include" / "wiixlaunch" / "botwcraft_switch15_pose.hpp"
+DIRECT_SOURCE = ROOT / "botw" / "switch15_direct_hook.hpp"
+DIRECT_HEADER = HOST / "include" / "wiixlaunch" / "botwcraft_switch15_direct.hpp"
 
 INCLUDE_ANCHOR = "#include <wiixlaunch/game_version.hpp>"
 INCLUDE_INSERT = "#include <wiixlaunch/botwcraft_switch15_pose.hpp>"
@@ -37,6 +39,7 @@ HEADER_CONTENT = r"""#pragma once
 #if WIIXL_SWITCH
 #include <wiixlaunch/game_version.hpp>
 #include <wiixlaunch/debug_log.hpp>
+#include <wiixlaunch/botwcraft_switch15_direct.hpp>
 #include <wiixlaunch/botw/graphics/nvn.hpp>
 #include <lib.hpp>
 #include <cstdint>
@@ -58,7 +61,7 @@ inline bool ValidCoordinate(float x) {
 inline void Poll(WiiXLaunch::BotW::NVN::CommandBuffer*, void*, int, int) {
     if (WiiXLaunch::GameVersion::Fingerprint() != kExpectedFingerprint) return;
     static uint32_t frames = 0;
-    if ((++frames % 6) != 0) return;
+    ++frames;
 
     const uintptr_t main = exl::util::GetMainModuleInfo().m_Total.m_Start;
     // This symbol is a POINTER to PlayerInfo, not the object itself.
@@ -70,12 +73,16 @@ inline void Poll(WiiXLaunch::BotW::NVN::CommandBuffer*, void*, int, int) {
     // acquires the actor and may access game state unavailable in menus.
     const auto getPlayer = reinterpret_cast<GetPlayerUncheckedFn>(
         main + kGetPlayerOffset);
-    if (!getPlayer(info)) return;
+    void* const player = getPlayer(info);
+    if (!player) return;
     const auto getPos = reinterpret_cast<GetPositionFn>(
         main + kGetPositionOffset);
     const float* xyz = getPos(info);
     if (!xyz || !ValidCoordinate(xyz[0]) ||
         !ValidCoordinate(xyz[1]) || !ValidCoordinate(xyz[2])) return;
+
+    BotwCraft15Direct::Poll(player, xyz);
+    if ((frames % 6) != 0) return;
 
     const int32_t x = static_cast<int32_t>(xyz[0] * 1000.0f);
     const int32_t y = static_cast<int32_t>(xyz[1] * 1000.0f);
@@ -88,6 +95,7 @@ inline void Register() {
         WIIXL_LOG("BotwCraft: Link pose sampling disabled - requires Switch 1.5.0 fingerprint 0xA982D2BC");
         return;
     }
+    BotwCraft15Direct::Register();
     WiiXLaunch::BotW::NVN::RegisterDrawCallback(&Poll);
     WIIXL_LOG("BotwCraft: Switch 1.5.0 Link pose reader registered from PlayerInfo");
 }
@@ -96,6 +104,12 @@ inline void Register() {
 """
 
 def patch():
+    if not DIRECT_SOURCE.is_file():
+        raise RuntimeError("Missing botw/switch15_direct_hook.hpp")
+    if DIRECT_HEADER.exists() and DIRECT_HEADER.read_text(encoding="utf-8") != DIRECT_SOURCE.read_text(encoding="utf-8"):
+        raise RuntimeError("Existing BOTW direct hook differs; refusing overwrite")
+    DIRECT_HEADER.parent.mkdir(parents=True, exist_ok=True)
+    DIRECT_HEADER.write_text(DIRECT_SOURCE.read_text(encoding="utf-8"), encoding="utf-8")
     if not MAIN.exists():
         raise RuntimeError("WiiXLaunch src/main.cpp missing; run setup_wiixlaunch.py first")
     text = MAIN.read_text(encoding="utf-8")
