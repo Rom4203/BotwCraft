@@ -7,6 +7,7 @@
 #include <wiixlaunch/imports/botw_player.h>
 #include <wiixlaunch/imports/botw_actor.h>
 #include <wiixlaunch/imports/botw_camera.h>
+#include <wiixlaunch/imports/botw_gfx.h>
 #include <wiixlaunch/imports/wiixl_call.h>
 #include <wiixlaunch/mod_math.h>
 
@@ -14,7 +15,7 @@ namespace S {
 WXL_USE_wiixl_core(Log);
 WXL_USE_wiixl_call(ImageBase);
 WXL_USE_wiixl_call(ResolveTarget);
-WXL_USE_wiixl_core(RegisterTick);
+WXL_USE_botw_gfx(RegisterDraw);
 WXL_USE_botw_player(Init);
 WXL_USE_botw_player(GetPlayerActor);
 WXL_USE_botw_player(ActorIsValid);
@@ -285,7 +286,7 @@ static void printGuestMailboxAddress() {
 
 extern "C" __attribute__((used)) void BotwCraftPlayerTick() {
     ++s_ticks;
-    if (s_ticks==1u) S::Log("[BOTW_NATIVE] CORE_FRAME_TICK_RUNNING");
+    if (s_ticks==1u) S::Log("[BOTW_NATIVE] NVN_FRAME_TICK_RUNNING");
     auto get = S::GetPlayerActor;
     auto valid = S::ActorIsValid;
     const uint32_t actor = get ? get() : 0;
@@ -348,16 +349,23 @@ extern "C" __attribute__((used)) void BotwCraftPlayerTick() {
     }
 }
 
+// botw.gfx draws ARE dispatched by NVN EndRecording on BOTW NX150, as
+// verified by VISUAL_PROBE_DRAW_CALLED in the actual user log. They do NOT
+// require the unsupported botw.player tick or wiixl.core's un-driven tick.
+// Deliberately draw NOTHING: old botwcraft.wxlm rendered a three-vertex
+// diagnostic triangle over the middle of the view.
+extern "C" __attribute__((used)) void BotwCraftFrame(
+    uintptr_t, uintptr_t, int32_t, int32_t) {
+    BotwCraftPlayerTick();
+}
+
 extern "C" __attribute__((used)) void WiiXLaunch_ModEntry() {
-    if (!S::Log || !S::Init || !S::RegisterTick) return;
+    if (!S::Log || !S::Init || !S::RegisterDraw) return;
     S::Init();
     printGuestMailboxAddress();
-    // On Switch WiiXLaunch logs "Player: disabled unverified Switch player tick
-    // hook"; registering botw.player does not dispatch any callback.
-    // wiixl.core is driven by the already-confirmed NVN frame instead.
-    if (!S::RegisterTick(&BotwCraftPlayerTick)) {
-        S::Log("[BOTW_NATIVE] ERROR: core frame tick registration refused");
+    if (!S::RegisterDraw(&BotwCraftFrame)) {
+        S::Log("[BOTW_NATIVE] ERROR: botw.gfx NVN frame callback refused");
         return;
     }
-    S::Log("[BOTW_NATIVE] core frame tick registered, camera prologue untouched");
+    S::Log("[BOTW_NATIVE] NVN frame callback registered; draw NONE; camera prologue untouched");
 }
