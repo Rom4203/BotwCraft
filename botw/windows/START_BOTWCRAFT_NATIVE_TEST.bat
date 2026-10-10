@@ -4,11 +4,15 @@ cd /d "%~dp0"
 echo BOTWCRAFT - Nintendo BOTW 1.5.0 direct native Rust test
 echo =====================================================
 echo [1] Installing the experimental WiiXLaunch module alongside the working mod...
-where py >nul 2>nul
-if not errorlevel 1 (
-  set "PY=py -3"
+if exist "D:\\Program Files\\Python\\python.exe" (
+  set "PY=\"D:\\Program Files\\Python\\python.exe\""
 ) else (
-  set "PY=python"
+  where py >nul 2>nul
+  if not errorlevel 1 (
+    set "PY=py -3"
+  ) else (
+    set "PY=python"
+  )
 )
 %PY% install_native_experimental.py
 if errorlevel 1 (
