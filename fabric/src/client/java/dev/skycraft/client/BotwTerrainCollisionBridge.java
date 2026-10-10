@@ -12,10 +12,32 @@ import net.minecraft.world.phys.Vec3;
  */
 public final class BotwTerrainCollisionBridge {
     private static volatile boolean started;
+    private static volatile boolean sessionLookupComplete;
+    private static java.lang.reflect.Method requestedMethod;
     private BotwTerrainCollisionBridge() {}
 
     public static boolean enabled() {
-        return BotwCraftSession.requested();
+        // The *actual* user-working test20 JAR has BotwCraftSession, while
+        // upstream SkyCraft source does not. Resolve the method once without
+        // recompiling or overwriting the user's stable session class.
+        if (!sessionLookupComplete) {
+            synchronized (BotwTerrainCollisionBridge.class) {
+                if (!sessionLookupComplete) {
+                    try {
+                        requestedMethod=Class.forName(
+                           "dev.skycraft.client.BotwCraftSession")
+                           .getDeclaredMethod("requested");
+                    } catch (ReflectiveOperationException ignored) {}
+                    sessionLookupComplete=true;
+                }
+            }
+        }
+        try {
+            return requestedMethod!=null
+                && Boolean.TRUE.equals(requestedMethod.invoke(null));
+        } catch (ReflectiveOperationException ex) {
+            return false;
+        }
     }
 
     public static Vec3 collide(LocalPlayer player, Vec3 wanted) {
