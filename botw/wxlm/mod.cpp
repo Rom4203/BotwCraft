@@ -537,7 +537,7 @@ static void printGuestMailboxAddress() {
 // ksys::phys::RigidBody::setLinearVelocity(Vec3&,float) main+0x00f8ec3c
 // Actual Actor::mMainBody and mTgtBody fields are at +0x190 / +0x198.
 // Do not delete Actor: Nintendo's player manager and scene streaming use it.
-static bool disableBodyMotion(uintptr_t body){
+static bool disableBodyMotion(uintptr_t body,bool updateContacts){
     if(!body || (body&7u) || body<0x10000u || !S::ResolveTarget)return false;
     using ContactNone=void(*)(void*);
     using SetGravity=void(*)(void*,float);
@@ -553,8 +553,10 @@ static bool disableBodyMotion(uintptr_t body){
         noVelocity=reinterpret_cast<SetVelocity>(S::ResolveTarget(0x00f8ec3cu,0));
     }
     if(!noContact || !noGravity || !noVelocity)return false;
-    noContact(reinterpret_cast<void*>(body));
-    noGravity(reinterpret_cast<void*>(body),0.f);
+    if(updateContacts){
+        noContact(reinterpret_cast<void*>(body));
+        noGravity(reinterpret_cast<void*>(body),0.f);
+    }
     const float zero[3]={0.f,0.f,0.f};
     noVelocity(reinterpret_cast<void*>(body),zero,0.000001f);
     return true;
@@ -573,8 +575,11 @@ static void freezeLinkPhysics(uint32_t handle) {
     // weapon hits and falling gravity now ignore this proxy actor.
     const uintptr_t a=*reinterpret_cast<const volatile uintptr_t*>(actor+0x190u);
     const uintptr_t b=*reinterpret_cast<const volatile uintptr_t*>(actor+0x198u);
-    const bool first=disableBodyMotion(a);
-    const bool second=(b!=a) ? disableBodyMotion(b) : first;
+    const bool first=disableBodyMotion(a,a!=s_physBodyA || s_ticks%30u==0u);
+    const bool second=(b!=a)
+       ? disableBodyMotion(b,b!=s_physBodyB || s_ticks%30u==0u) : first;
+    s_physBodyA=a;
+    s_physBodyB=b;
     if((first||second) && !s_loggedGhostPhysics){
         s_loggedGhostPhysics=true;
         S::Log("[BOTW_NATIVE] LINK_HAVOK_CONTACT_NONE_GRAVITY_ZERO_VELOCITY_ZERO");
@@ -656,7 +661,6 @@ extern "C" __attribute__((used)) void BotwCraftPlayerTick() {
     // Keep Link without body, collisions, gravity, rendering and velocity,
     // even while Minecraft is frozen or the Rust bridge stops transmitting.
     s_activeActorHandle=actor;
-    freezeLinkPhysics(actor);
     updateVisualModel(actor,true);
     if (!s_inputInit && Inputs::Init) s_inputInit=Inputs::Init()!=0;
     if (s_inputInit && Inputs::HoldInputCapture) Inputs::HoldInputCapture(2u);
@@ -668,6 +672,9 @@ extern "C" __attribute__((used)) void BotwCraftPlayerTick() {
     // Re-apply last trustworthy MC pose every native player frame so native
     // animation or solver never resumes falling between low-FPS host updates.
     const bool warped=warpLink(actor,s_heldPose);
+    // Physics suppression happens AFTER native actor placement, in case
+    // setMtx updates Havok velocities or collision state itself.
+    freezeLinkPhysics(actor);
     const bool camera=updateCameraFromGame(s_heldPose);
     if (!warped && !s_loggedWarp) {
         s_loggedWarp=true;
