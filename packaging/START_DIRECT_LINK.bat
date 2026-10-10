@@ -7,8 +7,8 @@ echo ============================================================
 echo No virtual gamepad, no GDB memory writes each frame.
 echo Source = real Minecraft physics and mouse look.
 echo Target = 1.5.0 Link actor's setMtx, via Ryujinx process memory.
-echo First-person camera is NOT yet connected to active CameraMgr.
-echo WARNING: actor setMtx runtime has not yet been verified on YOUR 1.5.0.
+echo First-person camera via actual LookAtCamera matrix hook (experiment).
+echo WARNING: actor and camera hook RUNTIME not yet verified on YOUR 1.5.0.
 echo Back up game saves and close other emulator sessions before testing.
 echo.
 echo 1. Run START_BRIDGE.bat in another terminal.
