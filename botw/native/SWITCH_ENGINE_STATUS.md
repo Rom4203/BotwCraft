@@ -17,3 +17,7 @@
 The presence of the code above does NOT mean that Zelda moves yet. The Rust compositor remains unchanged and is the game's separate third window.
 
 References: https://github.com/BladesawStudios/wiixlaunch-botw/tree/main/include/wiixlaunch/botw/game
+
+## Game-frame adapter added
+
+`switch_runtime_adapter.hpp` now binds the four native C callbacks to the native controller and the Switch camera adapter in one real game-frame entrypoint, `OnGameFrame`. It safely resets on changed Link/camera pointers and on disarm. The module still must provide `livePlayer`, `liveCamera`, `warp_player`, `show_player`, `enable_player_physics`, and map the actual BDP1 guest packet with an aligned monotonic host timestamp. Without all of those, `BWC_FLIGHT_NO_HOOKS` is the expected behavior; this is not a claim of in-game operation.
