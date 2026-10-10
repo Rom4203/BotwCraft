@@ -25,7 +25,7 @@ def verify(module: Path, manifest: Path):
     magic, version, machine = struct.unpack_from("<IHH", data)
     if (magic, version, machine) != (MAGIC, VERSION, AARCH64):
         raise ValueError(f"wrong WiiXLaunch Switch module header: {magic:08x}/{version}/{machine}")
-    mod_id = data[12:28].split(b"\\0",1)[0]
+    mod_id = data[12:28].split(bytes((0,)),1)[0]
     if mod_id != b"botwcraft":
         raise ValueError("wrong module id")
     heap_request = struct.unpack_from("<I", data, OFFSET_HEAP_REQUEST)[0]
