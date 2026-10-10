@@ -8,6 +8,7 @@
 #include <vector>
 #include "../native_guest_mesh.hpp"
 #include "../native_world_scene.hpp"
+#include "../native_hud_packet.hpp"
 
 static bool g_position_supported = false;
 static bool g_register_succeeds = true;
@@ -22,6 +23,10 @@ static uint32_t g_draw_vertices = 0;
 static void (*g_draw)(uintptr_t, uintptr_t, int32_t, int32_t) = nullptr;
 static std::vector<uint8_t> g_file_contents;
 static uint32_t g_file_reads = 0;
+static uint8_t g_hud_heap[BotwCraftHud::kPacketBytes + 16]{};
+static uint32_t g_hud_creations=0;
+static uint32_t g_hud_draws=0;
+
 
 
 extern "C" {
@@ -32,6 +37,26 @@ int32_t wiixl_import__wiixl_core__GameReadFile(const char* path, void* out, uint
     if (g_file_contents.empty() || g_file_contents.size() > cap) return -1;
     std::memcpy(out, g_file_contents.data(), g_file_contents.size());
     return static_cast<int32_t>(g_file_contents.size());
+}
+void* wiixl_import__wiixl_core__Alloc(uint32_t size, uint32_t align) {
+    assert(align == 16 && size <= sizeof(g_hud_heap));
+    return g_hud_heap;
+}
+uint32_t wiixl_import__botw_gfx__CreateTexture(const void* rgba, uint32_t size,
+                                                  int32_t w,int32_t h,int32_t fmt) {
+    assert(rgba && size == BotwCraftHud::kPixels);
+    assert(w == 128 && h == 72 && fmt == 0);
+    ++g_hud_creations;
+    return 42;
+}
+uint32_t wiixl_import__botw_gfx__DrawSprite(uintptr_t cmd,uintptr_t tex,
+                                            uint32_t handle,float x,float y,
+                                            float w,float h,float r,float g,float b,float a) {
+    assert(cmd && tex && handle == 42);
+    assert(x == -1.f && y == -1.f && w == 2.f && h == 2.f);
+    assert(r == 1.f && g == 1.f && b == 1.f && a == 1.f);
+    ++g_hud_draws;
+    return 1;
 }
 void wiixl_import__wiixl_core__Log(const char* msg) {
     g_logs.emplace_back(msg ? msg : "");
@@ -192,6 +217,26 @@ int main() {
     g_draw(1,1,1280,720);
     assert(Contains("BotwCraft:WORLD_SCENE_3D_ACCEPTED"));
     cameraSlot->ready = false;
+    assert(g_file_reads == 0);
+
+    // Native HUD uses a separate checked 128x72 BWH1 buffer; no files
+    // and no Windows overlay. One static GPU texture is allocated.
+    uintptr_t hudAddress = findAddress("BotwCraft:NATIVE_HUD_BUFFER_ADDR=0x");
+    assert(hudAddress && Contains("BotwCraft:NATIVE_HUD_CAPACITY=36896"));
+    auto* hud = reinterpret_cast<uint8_t*>(hudAddress);
+    auto* h = reinterpret_cast<BotwCraftHud::Header*>(hud);
+    *h = {BotwCraftHud::kMagic, BotwCraftHud::kVersion, 12,
+          BotwCraftHud::kWidth, BotwCraftHud::kHeight,
+          static_cast<uint32_t>(BotwCraftHud::kPixels), 0, 0};
+    for (size_t i=0; i<BotwCraftHud::kPixels; ++i)
+        hud[sizeof(*h) + i] = uint8_t(i % 251);
+    h->hash=BotwCraftHud::Hash(hud+sizeof(*h),BotwCraftHud::kPixels);
+    assert(BotwCraftHud::Valid(hud,BotwCraftHud::kPacketBytes));
+    g_draw(1,1,1280,720);
+    assert(g_hud_creations == 1 && g_hud_draws == 1);
+    assert(Contains("BotwCraft:NATIVE_HUD_TEXTURE_CREATED"));
+    g_draw(1,1,1280,720);
+    assert(g_hud_creations == 1 && g_hud_draws == 2);
     assert(g_file_reads == 0);
 
     // Future version where exact player offsets have been established:
