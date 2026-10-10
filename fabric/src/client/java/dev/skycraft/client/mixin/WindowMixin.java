@@ -15,7 +15,10 @@ public abstract class WindowMixin {
 		if (SkyClient.tookOver()) {
 			// Focused while Skyrim is connected; if Skyrim goes away, act unfocused so MC
 			// never tries to grab the (hidden) mouse.
-			cir.setReturnValue(SkyClient.linked());
+			// Rust compositor owns the OS focus. While explicitly opted in,
+			// the Minecraft client must believe its virtual input is active.
+			// SDL mouse grab is separately suppressed in InputConstantsMixin.
+			cir.setReturnValue(SkyClient.tookOver());
 		}
 	}
 
