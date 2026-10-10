@@ -1,4 +1,4 @@
-"""Regression tests: BotwCraft connection must never control Minecraft gameplay.
+"""Regression tests: BotwCraft connection cannot silently take over Minecraft.
 
 These tests protect users' saves and input against reintroducing SkyCraft's
 Skyrim-only code paths while native BOTW terrain/collision remains unavailable.
@@ -23,7 +23,7 @@ class ManualOnlyTests(unittest.TestCase):
         forbidden = (
             "requestTeleport(", "teleportTo(", "player.setPos(",
             "player.setYRot(", "hideWindowOnce(", "SDL_HideWindow(",
-            "InputBridge.drain(", "InputBridge.releaseAll(",
+            "InputBridge.releaseAll(",
             "MirrorWorld.openWhenReady(", "applyLinkedOptions(",
             "minecraft.options.save(", "skycraft$skipLevel("
         )
@@ -32,6 +32,11 @@ class ManualOnlyTests(unittest.TestCase):
                 self.assertNotIn(token, source)
         self.assertIn("return false;", source)
         self.assertIn("WorldExporter.frame(", source)
+        self.assertIn("if (BotwCraftSession.compositorInputs() && SkyLink.transportOpen())", source)
+        self.assertIn("InputBridge.drain(Minecraft.getInstance())", source)
+        session = (CLIENT / "BotwCraftSession.java").read_text(encoding="utf-8")
+        self.assertIn("private static volatile boolean compositorInputs;", session)
+        self.assertIn("if (enabled && !requested)", session)
 
     def test_no_automatic_server_rules_or_starter_items(self):
         source = (ROOT / "fabric/src/main/java/dev/skycraft/SkyCraft.java").read_text(encoding="utf-8")
