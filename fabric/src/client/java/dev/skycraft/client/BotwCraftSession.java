@@ -8,6 +8,7 @@ public final class BotwCraftSession {
     private static volatile boolean requested;
     // Keep Minecraft input focus; native HUD transport is explicitly opt-in.
     private static volatile boolean hudEnabled;
+    private static volatile boolean compositorInputs;
 
     private BotwCraftSession() {}
 
@@ -36,6 +37,24 @@ public final class BotwCraftSession {
             + ". Entrées clavier/souris dans Minecraft; Zelda reste l'affichage cible.";
     }
 
+    public static boolean compositorInputs() {
+        return requested && compositorInputs;
+    }
+
+    public static String setCompositorInputs(boolean enabled) {
+        if (enabled && !requested) {
+            return "BotwCraft: /botwcraft connect necessaire avant les controles.";
+        }
+        compositorInputs = enabled;
+        if (!enabled) {
+            InputBridge.releaseAll();
+        }
+        return enabled
+            ? "BotwCraft: INPUTS COMPOSITOR actifs. Le clavier/souris de la "
+                + "fenetre Rust controle Minecraft via SkyCraft v11."
+            : "BotwCraft: entrees Rust desactivees, touches relachees.";
+    }
+
     public static String connect() {
         if (BlockPreview.enabled()) {
             return "BotwCraft: ancien mode preview actif (experimentalBlocks=true ou "
@@ -50,6 +69,8 @@ public final class BotwCraftSession {
     public static String disconnect() {
         requested = false;
         hudEnabled = false;
+        compositorInputs = false;
+        InputBridge.releaseAll();
         SkyLink.stopHeartbeat();
         return "BotwCraft: liaison desactivee, Minecraft reste normal.";
     }
