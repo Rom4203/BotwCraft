@@ -73,9 +73,10 @@ def main():
             time.sleep(.25)
         else:
             log("LAUNCH","Rust bridge did not open port 39847");return 1
-        relay=ROOT/"bridge"/"ryujinx_log_relay.py"
-        if relay.is_file():
-            processes.append(("RYUJINX_RELAY",spawn("RYUJINX_RELAY",[sys.executable,"-u",relay])))
+        # Rust bridge tails ONLY positions from the current Ryujinx launch.
+        # Do not run the legacy Python relay: it replayed stale positions
+        # from previous append-only botwcraft.log sessions.
+        log("LAUNCH","Live BOTW pose relay is integrated into the Rust bridge")
         if not ryujinx_running():
             r=config_path("ryujinx-exe-path.txt") or RYUJINX_DEFAULT
             if r.is_file():processes.append(("RYUJINX_PROCESS",spawn("RYUJINX_PROCESS",[r],r.parent)))
@@ -101,7 +102,7 @@ def main():
         else:
             log("LAUNCH","Third-window compositor not installed or build failed")
         log("LAUNCH","Start Minecraft then use /botwcraft connect and /botwcraft inputs on")
-        log("LAUNCH","No Enter confirmation or old Python DIRECT_LINK needed.")
+        log("LAUNCH","No Enter confirmation, Python relay, or old DIRECT_LINK needed.")
         log("LAUNCH",f"Single diagnostic file: {LOG}")
         while True:
             for name,p in processes:
