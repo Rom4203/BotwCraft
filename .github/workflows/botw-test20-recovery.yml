@@ -1,0 +1,43 @@
+name: BotwCraft test20 V7 Rust recovery bridge
+on:
+  workflow_dispatch:
+  push:
+    branches: [botw-native-creative-flight]
+    paths: ['.github/workflows/botw-test20-recovery.yml']
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Exact source commit listed in the user's known-good test20.zip.
+          # Never compile the later V8/V9 guest protocol against the V7 binary.
+          ref: abcb0a7d5410b7341e3056b5dfc6ba3d27787473
+      - name: Graceful Minecraft 1-FPS stalls (6 seconds)
+        shell: pwsh
+        run: |
+          @'
+          from pathlib import Path
+          p=Path("botw/rust_bridge/src/engine.rs")
+          s=p.read_text()
+          a="const STALE:u64=1000;"
+          b=a+"\n// Minecraft heartbeat may run at 1 FPS. Keep the last valid pose and\n// avoid bridge disarm/rearm loops; BOTW telemetry stays at 1000ms.\nconst MC_STALE:u64=6000;"
+          assert s.count(a)==1
+          s=s.replace(a,b)
+          a="if beat==0 || now<beat || now-beat>STALE{return None}"
+          assert s.count(a)==2
+          s=s.replace(a,"if beat==0 || now<beat || now-beat>MC_STALE{return None}",1)
+          p.write_text(s)
+          print("test20 V7 bridge: Minecraft timeout 6000ms, Zelda timeout 1000ms")
+          '@ | python -
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Compile matching V7 BDP2 bridge
+        working-directory: botw/rust_bridge
+        run: cargo test --release --verbose; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; cargo build --release --verbose; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        shell: pwsh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BotwCraft-test20-V7-Minecraft-stall-bridge
+          path: botw/rust_bridge/target/release/botwcraft-rust-bridge.exe
+          if-no-files-found: error
