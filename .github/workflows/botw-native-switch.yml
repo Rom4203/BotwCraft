@@ -26,3 +26,39 @@ jobs:
           name: botwcraft-direct-switch-experimental
           path: build-native/switch-mods/bwc_pose.wxlm
           if-no-files-found: error
+
+  package-native-test:
+    needs: build-switch
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Download compiled Switch module
+        uses: actions/download-artifact@v4
+        with:
+          name: botwcraft-direct-switch-experimental
+          path: artifact-switch
+      - name: Build native Windows Rust bridge
+        run: cargo build --release --manifest-path botw/rust_bridge/Cargo.toml
+      - name: Assemble additive overlay for last working BotwCraft
+        shell: pwsh
+        run: |
+          $root = 'bundle/BotwCraft'
+          $title = '01007EF00011E000'
+          $mods = "$root/ryujinx_mods/contents/01007ef00011e000/BotwCraft/romfs/WiiXLaunch/mods"
+          $sd = "$root/ryujinx_sdcard/WiiXLaunch/mods/$title"
+          New-Item -ItemType Directory -Force "$root/bridge",$mods,$sd | Out-Null
+          Copy-Item 'botw/rust_bridge/target/release/botwcraft-rust-bridge.exe' "$root/bridge/"
+          Copy-Item 'artifact-switch/bwc_pose.wxlm' "$mods/"
+          Copy-Item 'artifact-switch/bwc_pose.wxlm' "$sd/"
+          Copy-Item 'botw/windows/start_all_rust.py' "$root/bridge/"
+          Copy-Item 'botw/windows/install_native_experimental.py' "$root/"
+          Copy-Item 'botw/windows/START_BOTWCRAFT_NATIVE_TEST.bat' "$root/"
+          Copy-Item 'botw/windows/README_TEST.txt' "$root/"
+          Compress-Archive -Path "$root" -DestinationPath 'BotwCraft_Native_Rust_Test_Overlay.zip' -Force
+      - name: Upload one-click experimental test overlay
+        uses: actions/upload-artifact@v4
+        with:
+          name: BotwCraft-Native-Rust-OneClick-Test
+          path: BotwCraft_Native_Rust_Test_Overlay.zip
+          if-no-files-found: error
