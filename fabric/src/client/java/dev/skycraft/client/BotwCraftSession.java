@@ -9,6 +9,7 @@ public final class BotwCraftSession {
     // Keep Minecraft input focus; native HUD transport is explicitly opt-in.
     private static volatile boolean hudEnabled;
     private static volatile boolean compositorInputs;
+    private static Boolean previouslyPauseOnLostFocus;
 
     private BotwCraftSession() {}
 
@@ -45,10 +46,23 @@ public final class BotwCraftSession {
         if (enabled && !requested) {
             return "BotwCraft: /botwcraft connect necessaire avant les controles.";
         }
-        compositorInputs = enabled;
-        if (!enabled) {
+        // Minecraft 26.3 pauseIfInactive() consults this field every
+        // frame. We MUST set it BEFORE the compositor takes Windows focus;
+        // never persist the user's option to options.txt.
+        var minecraft = net.minecraft.client.Minecraft.getInstance();
+        if (enabled) {
+            if (!compositorInputs) {
+                previouslyPauseOnLostFocus = minecraft.options.pauseOnLostFocus;
+            }
+            minecraft.options.pauseOnLostFocus = false;
+        } else {
+            if (previouslyPauseOnLostFocus != null) {
+                minecraft.options.pauseOnLostFocus = previouslyPauseOnLostFocus;
+                previouslyPauseOnLostFocus = null;
+            }
             InputBridge.releaseAll();
         }
+        compositorInputs = enabled;
         return enabled
             ? "BotwCraft: INPUTS COMPOSITOR actifs. Le clavier/souris de la "
                 + "fenetre Rust controle Minecraft via SkyCraft v11."
@@ -67,10 +81,11 @@ public final class BotwCraftSession {
     }
 
     public static String disconnect() {
+        // Restore the user's personal lost-focus preference even if the
+        // compositor disconnected while Minecraft was unfocused.
+        setCompositorInputs(false);
         requested = false;
         hudEnabled = false;
-        compositorInputs = false;
-        InputBridge.releaseAll();
         SkyLink.stopHeartbeat();
         return "BotwCraft: liaison desactivee, Minecraft reste normal.";
     }
