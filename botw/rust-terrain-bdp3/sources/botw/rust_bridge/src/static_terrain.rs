@@ -1,7 +1,7 @@
 //! Streams authentic BOTW Switch Havok mesh triangles from a user-owned RomFS
 //! converted into BTRI cache. Never performs in-game raycasts or generates
 //! synthetic floor. Works in a separate worker, keeping the camera thread free.
-use std::{collections::{BTreeMap,BTreeSet,HashMap,HashSet},fs::{self,File},io::{self,Read},path::{Path,PathBuf},sync::{Arc,Mutex,atomic::{AtomicBool,Ordering}},thread,time::{Duration,Instant}};
+use std::{collections::{BTreeSet,HashMap},fs::File,io::{self,Read},path::{Path,PathBuf},sync::{Arc,Mutex,atomic::{AtomicBool,Ordering}},thread,time::{Duration,Instant}};
 use crate::{engine::Engine,terrain::{self,Region,Triangle}};
 
 pub static STATIC_ACTIVE:AtomicBool=AtomicBool::new(false);
@@ -62,7 +62,7 @@ fn load(path:&Path,gx:i32,gz:i32)->io::Result<Tile>{
   let tri=RawTri::new(v);
   // Verify triangles remain in their own 250m tile; never inject corrupted
   // coordinates into Minecraft collision world.
-  if tri.min[0]<-0.2||tri.max[0]>250.2||tri.min[2]<-0.2||tri.max[2]>250.2 {return Err(io::Error::other("BTRI face outside tile"));}
+  if tri.min[0] < -0.2||tri.max[0]>250.2||tri.min[2] < -0.2||tri.max[2]>250.2 {return Err(io::Error::other("BTRI face outside tile"));}
   let key_x0=((tri.min[0] as f64+world_x as f64)/8.0).floor() as i32;
   let key_x1=((tri.max[0] as f64+world_x as f64)/8.0).floor() as i32;
   let key_z0=((tri.min[2] as f64+world_z as f64)/8.0).floor() as i32;
@@ -128,7 +128,7 @@ impl Tiles {
    let tz=ORIGIN_Z+index.1 as f64*GRID;
    let ax=tri.min[0] as f64+tx;let bx=tri.max[0] as f64+tx;
    let az=tri.min[2] as f64+tz;let bz=tri.max[2] as f64+tz;
-   if bx<min_x||ax>max_x||bz<min_z||az>max_z||tri.max[1] as f64<y_low||tri.min[1] as f64>y_high{continue}
+   if bx<min_x||ax>max_x||bz<min_z||az>max_z||(tri.max[1] as f64)<y_low||(tri.min[1] as f64)>y_high{continue}
    let mut v=[[0f32;3];3];
    for i in 0..3 { v[i]=[
      (tri.v[i][0] as f64+tx+origin_delta[0]) as f32,
