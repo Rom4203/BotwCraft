@@ -1,0 +1,25 @@
+name: BOTW BDP3 Rust terrain bridge
+on:
+  push:
+    branches: [botw-rust-native-collisions]
+    paths:
+      - 'botw/rust-terrain-bdp3/**'
+      - '.github/workflows/botw-rust-native-collisions.yml'
+  workflow_dispatch:
+jobs:
+  windows-rust:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: botw/rust-terrain-bdp3/sources/botw/rust_bridge
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust native collision unit tests
+        run: cargo test --verbose
+      - name: Compile the native Windows BDP3 bridge
+        run: cargo build --release --verbose
+      - uses: actions/upload-artifact@v4
+        with:
+          name: botwcraft-rust-bridge-with-terrain
+          path: botw/rust-terrain-bdp3/sources/botw/rust_bridge/target/release/botwcraft-rust-bridge.exe
+          if-no-files-found: error

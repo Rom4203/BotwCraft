@@ -1,0 +1,12 @@
+{
+  "tiles": [
+    {
+      "file": "YOUR_OWN_GAME_TILE.hght",
+      "x": -500.0,
+      "z": -500.0,
+      "size": 1000.0,
+      "min_y": -50.0,
+      "max_y": 750.0
+    }
+  ]
+}

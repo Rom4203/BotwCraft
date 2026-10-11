@@ -1,0 +1,44 @@
+BOTWCRAFT — BRANCHE RUST-NATIVE TERRAIN (11 OCTOBRE 2026)
+===========================================================
+
+LES MODIFICATIONS PARTENT DU ZIP BDP3 QUI MARCHAIT.
+- Un SEUL skycraft-0.1.2.jar dans minecraft_mods/ (meme nom et memes commandes).
+- Le compositor, Zelda WXLM et le protocole BDP3 120 Hz sont INCHANGES.
+- Rust produit des collisions pour Steve; Link n'est pas pilote par manette.
+- Aucun faux serveur; aucun nouveau paquet reseau Minecraft obligatoire.
+
+COMMENT CA MARCHE
+1. Les donnees terrain viennent des .hght originaux de BOTW, lus par Rust.
+2. BDP3 fournit la correspondance de positions MC <-> monde Zelda.
+3. Rust ecrit COL_TRIS + COL_REGION dans la memoire partagee v11 deja presente.
+4. Le JAR Minecraft integre lit ces donnees: collision lisse pour Steve,
+   formes voxel pour le serveur Minecraft integre.
+5. Lorsque des triangles reels sont proches, les collisions du monde Minecraft
+   sont remplacees pour Steve. Aucune teleportation de Steve n'est ajoutée.
+6. Si la liaison, la pose ou le terrain est absent: physique Minecraft normale.
+
+IMPORTANT : CECI N'EST PAS ENCORE UN SYSTEME COMPLET TESTE EN JEU.
+- L'EXE RUST present dans CE ZIP est encore l'original BDP3, NON RECOMPILE.
+  Compiler sous Windows avec BUILD_RUST_BRIDGE.bat pour y integrer terrain.rs.
+- Aucun fichier Nintendo .hght n'est distribue. Ils doivent provenir de ta
+  propre extraction du jeu. Les donnees .hght ne couvrent que les hauteurs
+  du terrain MainField. Les obstacles Havok, grottes, edifices et collisions
+  de donjons (.hksc / .hktmrb) necessitent encore un vrai decodeur physique.
+- terrain/terrain.json.example est un EXEMPLE DE SYNTAXE seulement. Les
+  coordonnees doivent venir du .tscb de TA VERSION du jeu, ne PAS copier
+  les nombres exemple en imaginant qu'ils correspondent a Hyrule.
+- Une fois les veritables tuiles et leurs coordonnees placees, renommer
+  terrain.json.example en terrain.json et editer la liste. START_BOTWCRAFT.bat
+  transmet automatiquement ce repertoire au producteur Rust.
+
+AUCUN fichier .hght ni manifest valide ? Le streamer Rust reste inactif et
+BotwCraft se comporte comme la version de depart (hors JAR avec gate inactive).
+Ne pas tester la partie terrain sur une sauvegarde Minecraft importante sans
+backup. Tester en solo avec un monde vide d'abord.
+
+CONSERVATION
+- Les sources de cette branche sont egalement sur GitHub sur la branche
+  botw-rust-native-collisions.
+- Le code Python experimental du chat precedent est ABANDONNE : il ne figure
+  pas dans cette version. Les scripts Python existants de lancement et
+  d'installation BDP3 ont ete laisses intacts pour ne pas briser le demarrage.
