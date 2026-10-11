@@ -216,6 +216,7 @@ pub fn transport_loop(state:Arc<Mutex<Engine>>){
    let mut terrain_ring_available=false;
    let mut terrain_ring_checked=false;
    let mut terrain_ring_lost=0u32;
+   let mut terrain_gdb_max_tiles=16usize;
    let mut terrain_disarmed_at:Option<Instant>=None;
    let mut ever_havok=false;
    let mut last_havok_warning=Instant::now()-Duration::from_secs(10);
@@ -322,7 +323,7 @@ pub fn transport_loop(state:Arc<Mutex<Engine>>){
             while terrain_ring_read!=write && consumed<32 {
               let index=(terrain_ring_read%64) as usize;
               let count=(write.wrapping_sub(terrain_ring_read) as usize)
-                .min(64-index).min(16).min(32-consumed as usize);
+                .min(64-index).min(terrain_gdb_max_tiles).min(32-consumed as usize);
               let location=addr+496+index*56;
               match remote.read(location,count*56){
                 Ok(bytes)=>{
@@ -338,6 +339,14 @@ pub fn transport_loop(state:Arc<Mutex<Engine>>){
                   if accepted!=count{break}
                 }
                 Err(e)=>{
+                  // Some Ryujinx GDB builds cap each memory-read packet to
+                  // 256 bytes. Fall back to four 56-byte tiles (224 bytes),
+                  // rather than losing ALL terrain on those emulator builds.
+                  if count>4 {
+                    terrain_gdb_max_tiles=4;
+                    eprintln!("[TERRAIN] GDB large reads unsupported ({e}); using 4-tile burst reads");
+                    continue;
+                  }
                   if last_havok_warning.elapsed()>=Duration::from_secs(5){
                     eprintln!("[TERRAIN] GDB burst read failed ({e}), BDP3 remains active");
                     last_havok_warning=Instant::now();
