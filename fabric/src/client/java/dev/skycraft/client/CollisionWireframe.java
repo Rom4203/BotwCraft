@@ -85,7 +85,7 @@ public final class CollisionWireframe implements ClientModInitializer {
     }
 
     private static void line(PoseStack.Pose pose, VertexConsumer buffer, float[] v, int a, int b, int color) {
-        buffer.addVertex(pose, v[a], v[a + 1], v[a + 2]).setColor(color).setNormal(pose, 0, 1, 0);
-        buffer.addVertex(pose, v[b], v[b + 1], v[b + 2]).setColor(color).setNormal(pose, 0, 1, 0);
+        buffer.addVertex(pose, v[a], v[a + 1], v[a + 2]).setColor(color).setNormal(pose, 0, 1, 0).setLineWidth(1.5f);
+        buffer.addVertex(pose, v[b], v[b + 1], v[b + 2]).setColor(color).setNormal(pose, 0, 1, 0).setLineWidth(1.5f);
     }
 }
