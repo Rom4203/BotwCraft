@@ -613,17 +613,25 @@ using TerrainAlloc = void*(*)(void*,int);
 using TerrainLayers = void(*)(void*,int);
 using TerrainSetRay = void(*)(void*,const Vec3Raw*,const Vec3Raw*);
 using TerrainSubmit = bool(*)(void*,int);
-using TerrainDone = bool(*)(const void*);
 using TerrainRelease = void(*)(void*);
 static TerrainAlloc tAlloc=nullptr;
 static TerrainLayers tLayers=nullptr;
 static TerrainSetRay tSetRay=nullptr;
 static TerrainSubmit tSubmit=nullptr;
-static TerrainDone tDone=nullptr;
 static TerrainRelease tRelease=nullptr;
 static bool tTried=false;
 static bool tReady=false;
 static bool tLogged=false;
+static bool tFirstFinished=false;
+static bool tFirstSubmitted=false;
+static bool tGridComplete=false;
+static bool tAllocWarned=false;
+static bool tSubmitWarned=false;
+static bool tStallWarned=false;
+static bool tNoHitWarned=false;
+static uint32_t tWaitTicks=0;
+static uint32_t tCompleted=0;
+static uint32_t tMissed=0;
 static void* tPending=nullptr;
 static uint32_t tIndex=0;
 static uint32_t tMask=0;
@@ -640,9 +648,8 @@ static void initializeTerrainQuery(){
     tLayers=reinterpret_cast<TerrainLayers>(S::ResolveTarget(0x00fc36a4u,0));
     tSetRay=reinterpret_cast<TerrainSetRay>(S::ResolveTarget(0x00fc38a0u,0));
     tSubmit=reinterpret_cast<TerrainSubmit>(S::ResolveTarget(0x00fc55acu,0));
-    tDone=reinterpret_cast<TerrainDone>(S::ResolveTarget(0x00fc55e8u,0));
     tRelease=reinterpret_cast<TerrainRelease>(S::ResolveTarget(0x00fc55d4u,0));
-    tReady=tAlloc && tLayers && tSetRay && tSubmit && tDone && tRelease;
+    tReady=tAlloc && tLayers && tSetRay && tSubmit && tRelease;
     S::Log(tReady?"[BOTW_NATIVE] TERRAIN_HAVOK_REQUEST_SYMBOLS_READY":
                  "[BOTW_NATIVE] TERRAIN_HAVOK_SYMBOLS_MISSING");
 }
@@ -651,23 +658,56 @@ static void sampleHavokTerrain(const Pose& pose) {
     if(!tReady)return;
     // Do not release requests until the physics worker has finished.
     if(tPending){
-        if(!tDone(tPending))return;
-        // This is the actual result from BOTW's Havok ray query.
+        // NX150 RayCastForRequest::isRequestFinished() does NOT report
+        // "worker finished". According to physRayCastRequestMgr.cpp it tests
+        // whether the request is back on the FREE list, which only happens
+        // AFTER release(). Waiting for it here deadlocked the FIRST ray forever.
+        //
+        // RayCast::postCast() sets atomic _70=1 after writing mHasHit,
+        // mHitNormal and mHitFraction. Every newly allocated request resets
+        // this flag to 0 before submission; read it with acquire ordering.
+        // A release is safe only after _70 becomes 1.
         const uintptr_t at=reinterpret_cast<uintptr_t>(tPending);
+        const volatile uint32_t* done=reinterpret_cast<const volatile uint32_t*>(at+0x70);
+        if(__atomic_load_n(done,__ATOMIC_ACQUIRE)!=1u){
+            if(++tWaitTicks>=180u && !tStallWarned){
+                tStallWarned=true;
+                S::Log("[BOTW_NATIVE] TERRAIN_QUERY_WAITING_FOR_PHYSICS_3S");
+            }
+            return;
+        }
+        if(!tFirstFinished){
+            tFirstFinished=true;
+            S::Log("[BOTW_NATIVE] TERRAIN_QUERY_FIRST_RESULT_READY");
+        }
+        ++tCompleted;
         const volatile uint8_t* hit=reinterpret_cast<const volatile uint8_t*>(at+0x30);
         const volatile float* normalY=reinterpret_cast<const volatile float*>(at+0x38);
         const volatile float* fraction=reinterpret_cast<const volatile float*>(at+0x40);
         const float frac=*fraction;
         const float ny=*normalY;
         if(*hit && finiteFloat(frac) && frac>=0.0f && frac<=1.0f &&
-          finiteFloat(ny) && ny>0.42f){
+           finiteFloat(ny) && ny>0.42f){
             tHeights[tIndex]=tFrom.y+(tTo.y-tFrom.y)*frac;
             tMask|=(1u<<tIndex);
+        }else{
+            ++tMissed;
+            if(tMissed>=36u && !tNoHitWarned){
+                tNoHitWarned=true;
+                S::Log("[BOTW_NATIVE] TERRAIN_PHYSICS_RESPONDS_BUT_NO_WALKABLE_HITS");
+            }
         }
         tRelease(tPending);
         tPending=nullptr;
+        tWaitTicks=0;
         ++tIndex;
         if(tIndex==9){
+            if(!tGridComplete){
+                tGridComplete=true;
+                S::Log(tMask ? "[BOTW_NATIVE] TERRAIN_FIRST_GRID_WITH_HITS" :
+                             "[BOTW_NATIVE] TERRAIN_FIRST_GRID_WITHOUT_HITS");
+            }
+            // Only publish complete 3x3 grids through the existing seqlock.
             const uint32_t next=g_BotwCraftLiveMailbox.terrain_seq+2u;
             g_BotwCraftLiveMailbox.terrain_seq=next-1u;
             g_BotwCraftLiveMailbox.terrain_mask=tMask;
@@ -698,22 +738,40 @@ static void sampleHavokTerrain(const Pose& pose) {
     const unsigned gx=tIndex%3u, gz=tIndex/3u;
     const float x=tCenter.x+(static_cast<float>(gx)-1.f)*kTerrainGridStep;
     const float z=tCenter.z+(static_cast<float>(gz)-1.f)*kTerrainGridStep;
-    tFrom={x,tCenter.y+3.0f,z};
-    tTo={x,tCenter.y-10.0f,z};
+    // Steve can fall far below Zelda's ground while the collision stream
+    // has not been initialized. A short [-10,+3] ray would then miss the
+    // terrain permanently and never be able to recover.
+    tFrom={x,tCenter.y+64.0f,z};
+    tTo={x,tCenter.y-48.0f,z};
     // HitAll=15. Probe ground and fixed objects, but NOT players, ragdolls
     // or sensors. The game owns the physics results.
     void* request=tAlloc(nullptr,15);
-    if(!request)return;
+    if(!request){
+        if(!tAllocWarned){tAllocWarned=true;S::Log("[BOTW_NATIVE] TERRAIN_ALLOC_RETURNED_NULL");}
+        return;
+    }
+    // Every request is reset by allocRequest(), but _70 is NOT reset by
+    // RayCast::reset(). Without this store, a reused request's prior result
+    // could look complete before the physics worker has executed this ray.
+    volatile uint32_t* completion=reinterpret_cast<volatile uint32_t*>(
+        reinterpret_cast<uintptr_t>(request)+0x70);
+    __atomic_store_n(completion,0u,__ATOMIC_RELEASE);
     tLayers(request,8); // EntityGround
     tLayers(request,9); // EntityGroundSmooth
     tLayers(request,10);// EntityGroundRough
     tLayers(request,2); // EntityGroundObject
     tSetRay(request,&tFrom,&tTo);
     if(!tSubmit(request,0)){
+        if(!tSubmitWarned){tSubmitWarned=true;S::Log("[BOTW_NATIVE] TERRAIN_SUBMIT_RETURNED_FALSE");}
         tRelease(request);
         return;
     }
     tPending=request;
+    tWaitTicks=0;
+    if(!tFirstSubmitted){
+        tFirstSubmitted=true;
+        S::Log("[BOTW_NATIVE] TERRAIN_QUERY_FIRST_SUBMITTED");
+    }
 }
 extern "C" __attribute__((used)) void BotwCraftPlayerTick() {
     ++s_ticks;

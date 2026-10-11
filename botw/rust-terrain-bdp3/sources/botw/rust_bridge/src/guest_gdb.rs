@@ -199,6 +199,7 @@ pub fn transport_loop(state:Arc<Mutex<Engine>>){
    let mut last_terrain=Instant::now()-Duration::from_secs(1);
    let mut ever_havok=false;
    let mut last_havok_warning=Instant::now()-Duration::from_secs(10);
+   let mut last_havok_diagnostic=Instant::now()-Duration::from_secs(10);
    loop{
     // Player XYZ is sampled every 100ms, NOT at every transmitted Minecraft
     // frame. That avoids a 4th GDB roundtrip on the critical camera path.
@@ -265,6 +266,16 @@ pub fn transport_loop(state:Arc<Mutex<Engine>>){
     if armed && authenticated && last_terrain.elapsed()>=Duration::from_millis(250){
       match remote.read(addr+432,56){
         Ok(samples)=>{
+          if samples.len()==56 && last_havok_diagnostic.elapsed()>=Duration::from_secs(8) {
+            let terrain_seq=u32::from_le_bytes(samples[0..4].try_into().unwrap());
+            let mask=u32::from_le_bytes(samples[4..8].try_into().unwrap());
+            if terrain_seq==0 {
+              eprintln!("[TERRAIN] waiting for first Havok grid (native mailbox seq=0; no collision mesh yet)");
+            }else if mask==0 {
+              eprintln!("[TERRAIN] Havok grid seq={terrain_seq}, mask=0 (raycasts completed but found no walkable ground)");
+            }
+            last_havok_diagnostic=Instant::now();
+          }
           let mut engine=state.lock().map_err(|_|other("bridge mutex poisoned"))?;
           if terrain.ingest(&samples,&pose,&mut engine.mem){ever_havok=true}
         }
