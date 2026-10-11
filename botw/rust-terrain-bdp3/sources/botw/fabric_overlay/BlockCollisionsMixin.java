@@ -4,7 +4,6 @@ import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import dev.skycraft.client.BotwCollisionGate;
 import dev.skycraft.world.SkyCollision;
-import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.BlockCollisions;
 import net.minecraft.world.level.CollisionGetter;
@@ -16,9 +15,10 @@ import net.minecraft.world.phys.shapes.VoxelShape;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 
-/** Replace vanilla MC WORLD collisions, not player movement/inputs/camera.
- * Client: exact smooth triangles via EntityCollideMixin -> SkyCollider.
- * Integrated server: Rust-created subvoxel blocks prevent validation rubberband.
+/**
+ * Inject native BOTW terrain as actual 1/8-block Minecraft VoxelShapes.
+ * BOTH sides see the identical collision boxes in BlockCollisions.computeNext:
+ * player movement, steps, gravity and onGround use unmodified vanilla physics.
  */
 @Mixin(BlockCollisions.class)
 public abstract class BlockCollisionsMixin {
@@ -29,23 +29,21 @@ public abstract class BlockCollisionsMixin {
         BlockPos pos, Operation<VoxelShape> original) {
         if (context instanceof EntityCollisionContext entityCtx
             && BotwCollisionGate.replacesVanilla(entityCtx.getEntity())) {
-            if (entityCtx.getEntity() instanceof LocalPlayer) {
-                return Shapes.empty(); // smooth triangle collision is applied AFTER vanilla's pass
-            }
-            // Integrated server receives only terrain voxel shapes.
+            // No client triangle pass and no server-only voxels: the SAME
+            // collision shape is returned for Steve on both threads.
             VoxelShape terrain = SkyCollision.shapeAt(pos);
             return terrain != null ? terrain : Shapes.empty();
         }
-        VoxelShape blockShape = original.call(context, state, level, pos);
-        // Preserve original SkyCraft behaviour for non-BOTW situations.
+        VoxelShape result = original.call(context, state, level, pos);
+        // Non-BOTW world retains original SkyCraft behavior.
         if (state.isAir()) {
             VoxelShape wall = dev.skycraft.world.SkyDig.wallShape(level, pos);
-            if (wall != null) blockShape = blockShape.isEmpty() ? wall : Shapes.or(blockShape, wall);
+            if (wall != null) result = result.isEmpty() ? wall : Shapes.or(result, wall);
         }
         if (context instanceof EntityCollisionContext ec && SkyCollision.usesSmoothCollider(ec.getEntity())) {
-            return blockShape;
+            return result;
         }
         VoxelShape sky = SkyCollision.shapeAt(pos);
-        return sky == null ? blockShape : blockShape.isEmpty() ? sky : Shapes.or(blockShape, sky);
+        return sky == null ? result : result.isEmpty() ? sky : Shapes.or(result, sky);
     }
 }

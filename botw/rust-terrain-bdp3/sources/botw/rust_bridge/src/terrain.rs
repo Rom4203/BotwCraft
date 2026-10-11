@@ -1,12 +1,9 @@
 //! BOTW native Havok raycast samples -> SkyCraft v11 Minecraft collisions.
 //!
-//! The guest (WiiXLaunch) owns physics queries. This relay NEVER fabricates
-//! ground, teleports Steve, calls Zelda through a virtual controller, or
-//! injects a fake Minecraft server. The *same* original Fabric JAR receives
-//! smooth client triangles and 1/8-block server-side voxel collision solids.
-//! The 3x3 grid covers a local patch around Link; remote objects and walls
-//! beyond ground raycasts are NOT represented yet.
-use std::collections::{BTreeMap, BTreeSet};
+//! Zelda Havok samples are cached as persistent 1/8-block Minecraft VoxelShape
+//! tiles for BOTH the client and integrated server (no movement rollback).
+//! No teleport, simulated ground, controller, proxy server or Python collider.
+use std::collections::BTreeMap;
 use crate::shared::SharedMap;
 
 const SIZE:usize=56;
@@ -130,31 +127,41 @@ fn tri_message(region:Region,tris:&[Triangle])->Vec<u8>{
 // + eight u64 8x8 bit-plane voxels (Y layers). The server simulates Steve
 // against these, independently of the client triangle pass.
 fn voxel_regions(tris:&[Triangle])->BTreeMap<Region,Vec<(i32,i32,i32,[u64;8])>>{
- let mut out=BTreeMap::<Region,Vec<(i32,i32,i32,[u64;8])>>::new();
- if tris.is_empty(){return out}
- let mut low=[f32::INFINITY;3];let mut high=[f32::NEG_INFINITY;3];
- for t in tris {let (a,b)=t.bounds();for i in 0..3{low[i]=low[i].min(a[i]);high[i]=high[i].max(b[i]);}}
- let x0=low[0].floor() as i32;let x1=high[0].ceil() as i32;
- let z0=low[2].floor() as i32;let z1=high[2].ceil() as i32;
- let y0=(low[1]-2.).floor() as i32;let y1=high[1].ceil() as i32;
- for bx in x0..x1 {for bz in z0..z1 {for by in y0..=y1 {
-  let mut bits=[0u64;8];
-  for vz in 0..8 {for vx in 0..8 {
-   let xx=bx as f32+(vx as f32+0.5)/8.;
-   let zz=bz as f32+(vz as f32+0.5)/8.;
-   let Some(h)=surface(tris,xx,zz)else{continue};
-   for vy in 0..8 {
-    let yy=by as f32+(vy as f32+0.5)/8.;
-    if yy<h && yy>=h-2.0 {bits[vy]|=1u64<<(vx+8*vz);}
+ // Build sub-voxel Minecraft collision shapes from the real Havok triangles.
+ // Only visit the block columns under each triangle, never the giant AABB
+ // encompassing all cached samples (which caused lag on hills and cliffs).
+ let mut result:BTreeMap<Region,BTreeMap<(i32,i32,i32),[u64;8]>>=BTreeMap::new();
+ for tri in tris {
+  let (low,high)=tri.bounds();
+  for bx in low[0].floor() as i32..high[0].ceil() as i32 {
+   for bz in low[2].floor() as i32..high[2].ceil() as i32 {
+    for vz in 0..8 {for vx in 0..8 {
+     let x=bx as f32+(vx as f32+0.5)/8.;
+     let z=bz as f32+(vz as f32+0.5)/8.;
+     let Some(h)=tri.height(x,z)else{continue};
+     // Each tile is 1/8 Minecraft block. A floor is a SOLID VoxelShape
+     // slab extending 0.75 blocks below the sampled Havok height.
+     // This is physically resolved by vanilla Minecraft, not teleported.
+     let y0=(h-0.75).floor() as i32;
+     let y1=h.floor() as i32;
+     for by in y0..=y1 {
+      for vy in 0..8 {
+       let y=by as f32+(vy as f32+0.5)/8.;
+       if y>=h-0.75 && y<h {
+        let region=Region::from_xyz(bx as f32,by as f32,bz as f32);
+        let block=result.entry(region).or_default().entry((bx,by,bz)).or_insert([0u64;8]);
+        block[vy]|=1u64<<(vx+8*vz);
+       }
+      }
+     }
+    }}
    }
-  }}
-  if bits.iter().any(|v|*v!=0){
-   let region=Region::from_xyz(bx as f32,by as f32,bz as f32);
-   out.entry(region).or_default().push((bx,by,bz,bits));
   }
- }}}
- out
+ }
+ result.into_iter().map(|(region,blocks)|(region,blocks.into_iter()
+  .map(|((x,y,z),bits)|(x,y,z,bits)).collect())).collect()
 }
+
 fn voxel_message(region:Region,blocks:&[(i32,i32,i32,[u64;8])])->Vec<u8>{
  let mut data=region.header(blocks.len());
  for (x,y,z,bits) in blocks {
@@ -164,11 +171,21 @@ fn voxel_message(region:Region,blocks:&[(i32,i32,i32,[u64;8])])->Vec<u8>{
  packet(COL_REGION,&data)
 }
 
+// Keyed on the 4x4-block floor tile; a new Havok sample refreshes its
+// corresponding cached tile instead of deleting the ENTIRE previous mesh.
+// Empty raycasts cannot erase known ground, preventing temporary holes.
+const CACHE_TILE:f32=4.0;
+const CACHE_RADIUS:f32=28.0;
+const CACHE_MAX:usize=96;
+fn cache_key(center:[f32;3])->(i32,i32){
+ ((center[0]/CACHE_TILE).floor() as i32,(center[2]/CACHE_TILE).floor() as i32)
+}
 #[derive(Default)]
 pub struct TerrainRelay {
  seq:u32,
- tri_regions:BTreeSet<Region>,
- voxel_regions:BTreeSet<Region>,
+ patches:BTreeMap<(i32,i32),Vec<Triangle>>,
+ tri_packets:BTreeMap<Region,Vec<u8>>,
+ voxel_packets:BTreeMap<Region,Vec<u8>>,
  started:bool,
  reports:u32,
 }
@@ -177,32 +194,63 @@ impl TerrainRelay {
   if guest.len()!=SIZE || pose.len()<100 {return false}
   let seq=u32::from_le_bytes(guest[0..4].try_into().unwrap());
   if seq==0 || seq&1==1 || seq==self.seq {return false}
-  let Some(tris)=triangles(guest,pose) else {return false};
-  let t=tri_regions(&tris);let vox=voxel_regions(&tris);
-  let new_t:BTreeSet<Region>=t.keys().copied().collect();
-  let new_v:BTreeSet<Region>=vox.keys().copied().collect();
-  let mut packets=Vec::new();
-  if !self.started {packets.push(clear());}
-  for r in self.tri_regions.difference(&new_t){packets.push(tri_message(*r,&[]))}
-  for r in self.voxel_regions.difference(&new_v){packets.push(voxel_message(*r,&[]))}
-  for (r,v) in &t {packets.push(tri_message(*r,v));}
-  for (r,v) in &vox{packets.push(voxel_message(*r,v));}
-  for packet in &packets{if !map.collision_write(packet){
-   eprintln!("[TERRAIN] SkyCraft collision ring full; frame will retry ({} packets)",packets.len());
-   return false
+  let Some(tris)=triangles(guest,pose)else{return false};
+  let mc=[at(pose,76).unwrap(),at(pose,80).unwrap(),at(pose,84).unwrap()];
+  let zelda=[at(pose,88).unwrap(),at(pose,92).unwrap(),at(pose,96).unwrap()];
+  let center=[at(guest,8).unwrap()-zelda[0]+mc[0],
+              at(guest,12).unwrap()-zelda[1]+mc[1],
+              at(guest,16).unwrap()-zelda[2]+mc[2]];
+  // Current player position (not a potentially old completed ray grid).
+  let current=[at(pose,32).unwrap()-zelda[0]+mc[0],
+               at(pose,36).unwrap()-zelda[1]+mc[1],
+               at(pose,40).unwrap()-zelda[2]+mc[2]];
+  if !tris.is_empty(){self.patches.insert(cache_key(center),tris.clone());}
+  self.patches.retain(|(kx,kz),_| {
+   let x=(*kx as f32+0.5)*CACHE_TILE;
+   let z=(*kz as f32+0.5)*CACHE_TILE;
+   (x-current[0]).abs()<=CACHE_RADIUS && (z-current[2]).abs()<=CACHE_RADIUS
+  });
+  while self.patches.len()>CACHE_MAX {
+   // Safety cap. Cache is spatially bounded already; remove the oldest
+   // key only if the player stands on dense meshes for a long time.
+   let key=*self.patches.keys().next().unwrap();self.patches.remove(&key);
+  }
+  let mesh:Vec<Triangle>=self.patches.values().flat_map(|v|v.iter().copied()).collect();
+  let t=tri_regions(&mesh);let vox=voxel_regions(&mesh);
+  let new_t:BTreeMap<Region,Vec<u8>>=t.into_iter().map(|(r,v)|(r,tri_message(r,&v))).collect();
+  let new_v:BTreeMap<Region,Vec<u8>>=vox.iter().map(|(r,v)|(*r,voxel_message(*r,v))).collect();
+  let mut messages=Vec::new();
+  if !self.started {messages.push(clear());}
+  for r in self.tri_packets.keys().filter(|r|!new_t.contains_key(r)) {
+   messages.push(tri_message(*r,&[]));
+  }
+  for r in self.voxel_packets.keys().filter(|r|!new_v.contains_key(r)) {
+   messages.push(voxel_message(*r,&[]));
+  }
+  for (r,msg) in &new_t {
+   if self.tri_packets.get(r)!=Some(msg){messages.push(msg.clone());}
+  }
+  for (r,msg) in &new_v {
+   if self.voxel_packets.get(r)!=Some(msg){messages.push(msg.clone());}
+  }
+  for packet in &messages {if !map.collision_write(packet) {
+    eprintln!("[TERRAIN] SkyCraft collision ring full; retry after drain ({} packets)",messages.len());
+    return false;
   }}
+  self.seq=seq;
   self.started=true;
-  self.seq=seq;self.tri_regions=new_t;self.voxel_regions=new_v;
-  self.reports+=1;
-  if self.reports==1 || self.reports%40==0 {
-   println!("[TERRAIN] Havok surface seq={} triangles={} solid_blocks={} MC_regions={} (no teleport)",
-    seq,tris.len(),vox.values().map(Vec::len).sum::<usize>(),vox.len());
+  self.tri_packets=new_t;
+  self.voxel_packets=new_v;
+  self.reports=self.reports.wrapping_add(1);
+  if self.reports==1 || self.reports%20==0 {
+   println!("[TERRAIN] Minecraft VoxelShape: Havok seq={} new_tris={} cached_tris={} solid_blocks={} voxel_regions={} changes={} (vanilla client+server, no rollback)",
+    seq,tris.len(),mesh.len(),vox.values().map(Vec::len).sum::<usize>(),vox.len(),messages.len());
   }
   true
  }
  pub fn clear(&mut self,map:&mut SharedMap){
   if self.started {let _=map.collision_write(&clear());}
-  self.seq=0;self.tri_regions.clear();self.voxel_regions.clear();self.started=false;
+  self.seq=0;self.patches.clear();self.tri_packets.clear();self.voxel_packets.clear();self.started=false;
  }
 }
 
