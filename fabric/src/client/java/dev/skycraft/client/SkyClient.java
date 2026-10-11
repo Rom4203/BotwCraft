@@ -95,6 +95,10 @@ public final class SkyClient {
         mcState.z = feet.z;
         mcState.yaw = player.getYRot();
         mcState.pitch = player.getXRot();
+        // Vanilla minecraft:scale modifies player dimensions and eye height.
+        // Export the current eye height so the Zelda camera follows /attribute
+        // changes (and crawling/crouching) without any BotwCraft-only size command.
+        mcState.eyeHeight = player.getEyeHeight();
         mcState.frameCounter = ++frameCounter;
         mcState.teleportAck = 0;
         mcState.fov = 70.0F;

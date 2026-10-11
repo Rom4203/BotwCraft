@@ -110,12 +110,14 @@ impl Engine{
       let y=(m.yaw as f64).to_radians();
       let p=(m.pitch as f64).to_radians();
       let forward=[-y.sin()*p.cos(),-p.sin(),y.cos()*p.cos()];
-      // On the current Fabric bridge some instances report eye=0 even
-      // while Steve is standing. Using that value put Zelda's camera at
-      // Link's feet. Keep valid crouching/standing heights; otherwise
-      // default to an adult Minecraft eye height.
-      let eye_height=if (1.15..=2.10).contains(&m.eye){m.eye as f64}else{1.72};
-      let eye=[pos[0],pos[1]+eye_height+0.07,pos[2]];
+      // Minecraft sends the actual eye height, already adjusted by the
+      // vanilla minecraft:scale attribute and the current pose. No hard-coded
+      // adult-sized range: scaled players can be much shorter or taller.
+      let eye_height=if (0.05..=64.0).contains(&m.eye){m.eye as f64}else{1.72};
+      // Preserve the previous ~1.79m standing camera while letting the
+      // extra height scale with the player's dimensions. At vanilla 1.62m
+      // eye height this matches the old 1.72+0.07 result.
+      let eye=[pos[0],pos[1]+eye_height*(1.79/1.62),pos[2]];
       let vals=[pos[0],pos[1],pos[2],eye[0],eye[1],eye[2],
         forward[0],forward[1],forward[2],m.yaw as f64,m.pitch as f64,
         ma[0],ma[1],ma[2],ga[0],ga[1],ga[2],0.0];
