@@ -839,8 +839,20 @@ static bool chooseTile(const Pose& pose,int32_t& rx,int32_t& rz){
         const float centerDist=static_cast<float>(dx*dx+dz*dz);
         const float lookDist=static_cast<float>(ex*ex+ez*ez);
         // Strong preference to cover the next step, then ahead of movement.
-        const float score=terrainMin(centerDist,lookDist*0.78f+1.2f)+
-                          centerDist*0.025f;
+        // Prefer a narrow corridor in the movement direction rather than
+        // burning Havok queries behind Steve while he runs forward.
+        const float mx=predicted.x-pose.position[0];
+        const float mz=predicted.z-pose.position[2];
+        const float md2=mx*mx+mz*mz;
+        float behind=0.f,lateral=0.f;
+        if(md2>.1f){
+            const float inv=1.f/terrainSqrt(md2);
+            const float along=static_cast<float>(dx)*mx*inv+static_cast<float>(dz)*mz*inv;
+            lateral=static_cast<float>(dx)*mz*inv-static_cast<float>(dz)*mx*inv;
+            if(along<-.4f)behind=-along*2.2f;
+        }
+        const float score=terrainMin(centerDist*.8f,lookDist*.6f+.8f)+
+                          lateral*lateral*.24f+behind+centerDist*.02f;
         if(score<best){best=score;rx=x;rz=z;found=true;}
     }
     return found;
@@ -892,7 +904,9 @@ static void sampleHavokTerrain(const Pose& pose){
         if(job.finished==9){
             if(job.mask && (job.finished!=job.lastPublishedFinished ||
                 job.mask!=job.lastPublishedMask))publishHavokGrid(job);
-            storeTile(job.ix,job.iz,pose.host_ms,job.mask!=0);
+            // Incomplete patches may be revisited after 8s; cached good
+            // points are reused, only missing raycasts are repeated.
+            storeTile(job.ix,job.iz,pose.host_ms,job.mask==0x1ffu);
             job.active=false;
         }else if(job.partialCount<2 && job.finished>=4u &&
               (job.partialCount==0||job.finished>=7u) &&
