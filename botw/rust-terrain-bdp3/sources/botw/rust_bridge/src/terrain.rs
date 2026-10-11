@@ -3,11 +3,11 @@
 //! Zelda Havok samples are cached as persistent 1/8-block Minecraft VoxelShape
 //! tiles for BOTH the client and integrated server (no movement rollback).
 //! No teleport, simulated ground, controller, proxy server or Python collider.
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap,BTreeSet};
 use crate::shared::SharedMap;
 
 const SIZE:usize=56;
-const STEP:f32=3.4;
+const STEP:f32=0.68;
 const MAX_HEIGHT_EDGE:f32=3.0;
 const REGION:i32=8;
 const TRI_TERRAIN:u32=8;
@@ -174,79 +174,124 @@ fn voxel_message(region:Region,blocks:&[(i32,i32,i32,[u64;8])])->Vec<u8>{
  packet(COL_REGION,&data)
 }
 
-// Cache on 1.25-block centers so moving within a 4-block tile never
-// overwrites the previous (much larger) 5.5x5.5-meter sampled mesh.
-// Empty raycasts cannot erase known ground, preventing temporary holes.
-const CACHE_TILE:f32=1.25;
-const CACHE_RADIUS:f32=36.0;
-const CACHE_MAX:usize=64;
+// Fixed, world-aligned 1.36m tiles rather than moving the same 3x3 ray grid
+// every time Steve moves. Each completed tile is transmitted only on change.
+// Recompute only dirty 8-block Minecraft regions, NOT the entire 36m cache.
+const CACHE_TILE:f32=1.36;
+const CACHE_RADIUS:f32=24.0;
+const CACHE_MAX:usize=384;
 fn cache_key(center:[f32;3])->(i32,i32){
- ((center[0]/CACHE_TILE).floor() as i32,(center[2]/CACHE_TILE).floor() as i32)
+ ((center[0]/CACHE_TILE).round() as i32,(center[2]/CACHE_TILE).round() as i32)
+}
+struct Patch {
+ seq:u32,
+ triangles:Vec<Triangle>,
+ tri_regions:BTreeMap<Region,Vec<Triangle>>,
+ voxel_regions:BTreeMap<Region,Vec<(i32,i32,i32,[u64;8])>>,
+}
+impl Patch {
+ fn new(seq:u32,triangles:Vec<Triangle>)->Self{
+  let tri_regions=tri_regions(&triangles);
+  let voxel_regions=voxel_regions(&triangles);
+  Self{seq,triangles,tri_regions,voxel_regions}
+ }
+ fn regions(&self)->BTreeSet<Region>{
+  self.tri_regions.keys().chain(self.voxel_regions.keys()).copied().collect()
+ }
 }
 #[derive(Default)]
 pub struct TerrainRelay {
  seq:u32,
- patches:BTreeMap<(i32,i32),(u32,Vec<Triangle>)>,
+ patches:BTreeMap<(i32,i32),Patch>,
  tri_packets:BTreeMap<Region,Vec<u8>>,
  voxel_packets:BTreeMap<Region,Vec<u8>>,
  started:bool,
  reports:u32,
+ stats_updates:u32,
 }
 impl TerrainRelay {
  pub fn ingest(&mut self,guest:&[u8],pose:&[u8],map:&mut SharedMap)->bool{
-  if guest.len()!=SIZE || pose.len()<100 {return false}
+  if guest.len()!=SIZE || pose.len()<100{return false}
   let seq=u32::from_le_bytes(guest[0..4].try_into().unwrap());
-  if seq==0 || seq&1==1 || seq==self.seq {return false}
+  if seq==0 || seq&1==1 || seq==self.seq{return false}
   let Some(tris)=triangles(guest,pose)else{return false};
   let mc=[at(pose,76).unwrap(),at(pose,80).unwrap(),at(pose,84).unwrap()];
   let zelda=[at(pose,88).unwrap(),at(pose,92).unwrap(),at(pose,96).unwrap()];
   let center=[at(guest,8).unwrap()-zelda[0]+mc[0],
               at(guest,12).unwrap()-zelda[1]+mc[1],
               at(guest,16).unwrap()-zelda[2]+mc[2]];
-  // Current player position (not a potentially old completed ray grid).
   let current=[at(pose,32).unwrap()-zelda[0]+mc[0],
                at(pose,36).unwrap()-zelda[1]+mc[1],
                at(pose,40).unwrap()-zelda[2]+mc[2]];
-  if !tris.is_empty(){self.patches.insert(cache_key(center),(seq,tris.clone()));}
-  self.patches.retain(|(kx,kz),_| {
-   let x=(*kx as f32+0.5)*CACHE_TILE;
-   let z=(*kz as f32+0.5)*CACHE_TILE;
-   (x-current[0]).abs()<=CACHE_RADIUS && (z-current[2]).abs()<=CACHE_RADIUS
-  });
+  let mut dirty=BTreeSet::new();
+  if !tris.is_empty(){
+   let key=cache_key(center);
+   // Duplicate partial tile publications merge into the latest data.
+   // Preserve a full known mesh rather than replacing it with fewer hits.
+   let replace=self.patches.get(&key).is_none_or(|old|tris.len()>=old.triangles.len());
+   if replace{
+    let patch=Patch::new(seq,tris.clone());
+    if let Some(old)=self.patches.insert(key,patch){dirty.extend(old.regions());}
+    dirty.extend(self.patches.get(&key).unwrap().regions());
+   }
+  }
+  let expired:Vec<_>=self.patches.iter().filter_map(|(key,_)|{
+   let x=(key.0 as f32)*CACHE_TILE;
+   let z=(key.1 as f32)*CACHE_TILE;
+   ((x-current[0]).abs()>CACHE_RADIUS || (z-current[2]).abs()>CACHE_RADIUS).then_some(*key)
+  }).collect();
+  for key in expired {if let Some(old)=self.patches.remove(&key){dirty.extend(old.regions());}}
   while self.patches.len()>CACHE_MAX {
-   // Evict the oldest patch, not the lexicographically smallest coordinate.
-   let key=*self.patches.iter().min_by_key(|(_, (updated,_))|*updated).unwrap().0;self.patches.remove(&key);
+   let key=*self.patches.iter().min_by_key(|(_,p)|p.seq).unwrap().0;
+   if let Some(old)=self.patches.remove(&key){dirty.extend(old.regions());}
   }
-  let mesh:Vec<Triangle>=self.patches.values().flat_map(|(_,v)|v.iter().copied()).collect();
-  let t=tri_regions(&mesh);let vox=voxel_regions(&mesh);
-  let new_t:BTreeMap<Region,Vec<u8>>=t.into_iter().map(|(r,v)|(r,tri_message(r,&v))).collect();
-  let new_v:BTreeMap<Region,Vec<u8>>=vox.iter().map(|(r,v)|(*r,voxel_message(*r,v))).collect();
   let mut messages=Vec::new();
-  if !self.started {messages.push(clear());}
-  for r in self.tri_packets.keys().filter(|r|!new_t.contains_key(r)) {
-   messages.push(tri_message(*r,&[]));
+  if !self.started {
+   messages.push(clear());
+   for patch in self.patches.values(){dirty.extend(patch.regions());}
   }
-  for r in self.voxel_packets.keys().filter(|r|!new_v.contains_key(r)) {
-   messages.push(voxel_message(*r,&[]));
+  let mut solid_blocks=0usize;
+  for region in &dirty{
+   // Most updates touch one 8-block region, not hundreds of cached patches.
+   let mut tris_region=Vec::new();
+   let mut blocks:BTreeMap<(i32,i32,i32),[u64;8]>=BTreeMap::new();
+   for patch in self.patches.values(){
+    if let Some(part)=patch.tri_regions.get(region){tris_region.extend_from_slice(part);}
+    if let Some(part)=patch.voxel_regions.get(region){
+     for (x,y,z,bits) in part {
+      let dest=blocks.entry((*x,*y,*z)).or_insert([0u64;8]);
+      for i in 0..8{dest[i]|=bits[i]}
+     }
+    }
+   }
+   solid_blocks+=blocks.len();
+   let tri=tri_message(*region,&tris_region);
+   if self.tri_packets.get(region)!=Some(&tri){messages.push(tri.clone());}
+   if tris_region.is_empty(){self.tri_packets.remove(region);}else{self.tri_packets.insert(*region,tri);}
+   let vox:Vec<_>=blocks.into_iter().map(|((x,y,z),bits)|(x,y,z,bits)).collect();
+   let msg=voxel_message(*region,&vox);
+   if self.voxel_packets.get(region)!=Some(&msg){messages.push(msg.clone());}
+   if vox.is_empty(){self.voxel_packets.remove(region);}else{self.voxel_packets.insert(*region,msg);}
   }
-  for (r,msg) in &new_t {
-   if self.tri_packets.get(r)!=Some(msg){messages.push(msg.clone());}
-  }
-  for (r,msg) in &new_v {
-   if self.voxel_packets.get(r)!=Some(msg){messages.push(msg.clone());}
-  }
-  for packet in &messages {if !map.collision_write(packet) {
-    eprintln!("[TERRAIN] SkyCraft collision ring full; retry after drain ({} packets)",messages.len());
+  // Avoid repeating unchanged blocks every 20-50ms and clogging the
+  // Minecraft collision ring with redundant updates.
+  for packet in &messages {
+   if !map.collision_write(packet){
+    eprintln!("[TERRAIN] collision ring saturated ({} messages); retry when consumer drains",messages.len());
+    // Force a full refresh on next successful packet rather than pretending
+    // an unaccepted mesh is already installed.
+    self.started=false;self.tri_packets.clear();self.voxel_packets.clear();
     return false;
-  }}
-  self.seq=seq;
-  self.started=true;
-  self.tri_packets=new_t;
-  self.voxel_packets=new_v;
+   }
+  }
+  self.seq=seq;self.started=true;
   self.reports=self.reports.wrapping_add(1);
-  if self.reports==1 || self.reports%20==0 {
-   println!("[TERRAIN] Minecraft VoxelShape: Havok seq={} new_tris={} cached_tris={} solid_blocks={} voxel_regions={} changes={} (vanilla client+server, no rollback)",
-    seq,tris.len(),mesh.len(),vox.values().map(Vec::len).sum::<usize>(),vox.len(),messages.len());
+  self.stats_updates+=messages.len() as u32;
+  if self.reports==1 || self.reports%80==0 {
+   let cached:usize=self.patches.values().map(|p|p.triangles.len()).sum();
+   println!("[TERRAIN] FINE 0.68m grid seq={} new_tris={} cached_tiles={} cached_tris={} dirty_regions={} dirty_solid_blocks={} sent_packets={} (cached regions not rescanned)",
+    seq,tris.len(),self.patches.len(),cached,dirty.len(),solid_blocks,self.stats_updates);
+   self.stats_updates=0;
   }
   true
  }
@@ -280,7 +325,7 @@ mod coverage_tests {
  fn adjacent_samples_do_not_replace_full_terrain_patch() {
   let a=cache_key([3.0,0.0,8.0]);
   let b=cache_key([4.5,0.0,8.0]);
-  assert_ne!(a,b,"each >1.25m movement must retain previous 5.5m sampled footprint");
+  assert_ne!(a,b,"adjacent 1.36m tiles must not evict each other");
  }
  #[test]
  fn steep_cliff_does_not_generate_fabricated_floor_between_banks(){

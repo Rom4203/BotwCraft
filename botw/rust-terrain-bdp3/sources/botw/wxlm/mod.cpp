@@ -84,6 +84,15 @@ struct alignas(16) Mailbox {
     volatile uint32_t terrain_mask;
     volatile float terrain_center[3];
     volatile float terrain_heights[9];
+    // V2: lossless 64-grid ring. Host reads the 56B entries by index at
+    // 496 + (sequence % 64) * 56 without losing grids when GDB is slow.
+    volatile uint32_t terrain_ring_write;
+    volatile uint32_t terrain_ring_magic;
+    struct TerrainGrid {
+        volatile uint32_t seq, mask;
+        volatile float center[3];
+        volatile float heights[9];
+    } terrain_ring[64];
 };
 static_assert(offsetof(Mailbox, packet) == 40);
 static_assert(offsetof(Mailbox, acknowledged_seq) == 152);
@@ -95,6 +104,10 @@ static_assert(offsetof(Mailbox, link_render_hidden) == 200, "Link visibility sta
 static_assert(offsetof(Mailbox, fast_slot) == 204, "BDP2 selector ABI drift");
 static_assert(offsetof(Mailbox, fast) == 208, "BDP2 slots ABI drift");
 static_assert(offsetof(Mailbox, fast[1]) == 320, "BDP2 second slot ABI drift");
+static_assert(offsetof(Mailbox, terrain_seq) == 432, "legacy terrain ABI drift");
+static_assert(offsetof(Mailbox, terrain_ring_write) == 488, "v2 ring header ABI drift");
+static_assert(offsetof(Mailbox, terrain_ring) == 496, "v2 ring data ABI drift");
+static_assert(sizeof(Mailbox::TerrainGrid)==56, "terrain ring grid record must be 56 bytes");
 
 extern "C" {
 // Marker must remain in the actual guest .data of this wxlm module.
@@ -597,17 +610,11 @@ static void installLinkSoundMute(){
     S::Log("[BOTW_NATIVE] LINK_AUDIO_SOUNDLINK_VOLUME_FILTER_ACTIVE");
 }
 
-// Native NX150 symbols matched against zeldaret/botw uking_functions.csv.
-// ksys::phys::RayCastForRequest::allocRequest       main+0x00FC5590
-// RayCast::enableLayer                              main+0x00FC36A4
-// RayCast::setStartAndEnd                           main+0x00FC38A0
-// RayCastForRequest::submitRequest                  main+0x00FC55AC
-// RayCastForRequest::isRequestFinished              main+0x00FC55E8
-// RayCastForRequest::release                        main+0x00FC55D4
-// The result fields are from physRayCast.h (NX150, 64-bit):
-// mHasHit at +0x30, mHitNormal.y +0x38, mHitFraction +0x40.
-// An asynchronous Havok raycast is necessary to avoid querying a locked
-// physics world from the player callback. NEVER modify Minecraft positions.
+// Havok NX150 asynchronous raycasts: no game tick is blocked and only
+// genuine sampled collision ground is ever returned to Minecraft.
+// 0.68m ray spacing = 5x finer along each axis than 3.4m (25x area detail).
+// Don't blindly perform 25x work: each coordinate is sampled once and shared
+// by neighboring 1.36m scan tiles. Completed tiles are cached for minutes.
 struct Vec3Raw {float x,y,z;};
 using TerrainAlloc = void*(*)(void*,int);
 using TerrainLayers = void(*)(void*,int);
@@ -619,255 +626,317 @@ static TerrainLayers tLayers=nullptr;
 static TerrainSetRay tSetRay=nullptr;
 static TerrainSubmit tSubmit=nullptr;
 static TerrainRelease tRelease=nullptr;
-static bool tTried=false;
-static bool tReady=false;
-static bool tLogged=false;
-static bool tFirstFinished=false;
-static bool tFirstSubmitted=false;
-static bool tGridComplete=false;
-static bool tAllocWarned=false;
-static bool tSubmitWarned=false;
-static bool tStallWarned=false;
-static bool tNoHitWarned=false;
-static uint32_t tWaitTicks=0;
-static uint32_t tCompleted=0;
-static uint32_t tMissed=0;
-// Up to nine independent Havok physics rays. Previous single-request 3x3
-// scans took ~6 seconds, leaving Steve falling before a grid was published.
-// Poll without waiting from the Zelda main/player callback.
-static constexpr unsigned kTerrainConcurrency=9;
-static void* tPending[9]={};
-static Vec3Raw tStarts[9]={};
-static Vec3Raw tEnds[9]={};
-static uint32_t tPendingCount=0;
-static uint32_t tNext=0;
-static uint32_t tFinishedCount=0;
-static uint32_t tMask=0;
-static Vec3Raw tCenter{};
-static float tHeights[9]={};
-static bool tGridActive=false;
-static uint32_t tPauseTicks=0;
-static float tLastGround=0.0f;
+static bool tTried=false,tReady=false,tLogged=false,tFirstSubmitted=false,tFirstFinished=false;
+static bool tAllocWarned=false,tSubmitWarned=false,tNoHitWarned=false,tStallWarned=false;
+static uint32_t tCompleted=0,tMissed=0,tGridCount=0,tSeq=0;
+static constexpr float kStep=0.68f;
+static constexpr float kTile=2.f*kStep;
+static constexpr unsigned kJobs=2;
+static constexpr unsigned kMaxInFlight=18;
+static constexpr unsigned kSubmitsPerTick=6;
+static constexpr unsigned kPriority[9]={4,1,3,5,7,0,2,6,8};
+static constexpr unsigned kPointCacheSize=1024;
+static constexpr unsigned kTileCacheSize=512;
+static constexpr unsigned kRingSize=64;
+static constexpr uint64_t kHitExpireMs=180000u; // revisit after 3 minutes
+static constexpr uint64_t kMissExpireMs=8000u;  // newly streamed world may fill in
+static constexpr uint64_t kTileHitExpireMs=180000u;
+static constexpr uint64_t kTileMissExpireMs=8000u;
+struct PointCache {
+    int32_t ix,iz;
+    float height;
+    uint64_t at;
+    uint8_t hit,valid;
+};
+static PointCache tPoints[kPointCacheSize]={};
+static unsigned tPointCursor=0;
+struct TileCache {
+    int32_t ix,iz;
+    uint64_t at;
+    uint8_t gotHit,valid;
+};
+static TileCache tTiles[kTileCacheSize]={};
+static unsigned tTileCursor=0;
+struct Job {
+    bool active=false;
+    int32_t ix=0,iz=0;
+    uint64_t started=0;
+    Vec3Raw center{};
+    void* pending[9]={};
+    Vec3Raw starts[9]={};
+    Vec3Raw ends[9]={};
+    float heights[9]={};
+    uint32_t mask=0;
+    unsigned next=0,finished=0,pendingCount=0;
+    unsigned partialCount=0;
+    uint32_t lastPublishedMask=0;
+    unsigned lastPublishedFinished=0;
+};
+static Job tJobs[kJobs]={};
+static float tLastGround=0.f;
 static bool tHasGround=false;
-static uint32_t tGridNumber=0;
-// Cover the route *ahead* of Steve; finished grids remain real Havok hits.
-// This reduces run-ahead holes without drawing speculative/fake ground.
-static constexpr float kTerrainGridStep=3.4f;
-static Vec3Raw tObservedPos{};
+static Vec3Raw tObservedPos{},tVelocity{};
 static uint64_t tObservedAt=0;
-static Vec3Raw tVelocity{};
-static constexpr float kPredictSeconds=1.15f;
-static constexpr float kMaxLookahead=3.0f;
-static constexpr unsigned kPriorityRay[9]={4,1,3,5,7,0,2,6,8};
-static unsigned tPartialPublishes=0;
-static bool hasWalkableTriangle(){
-    constexpr unsigned faces[8][3]={
-        {0,3,1},{1,3,4},{1,4,2},{2,4,5},
-        {3,6,4},{4,6,7},{4,7,5},{5,7,8}
-    };
-    for(const auto& f:faces){
-        if(!(tMask&(1u<<f[0])) || !(tMask&(1u<<f[1])) || !(tMask&(1u<<f[2]))) continue;
-        const float a=tHeights[f[0]],b=tHeights[f[1]],c=tHeights[f[2]];
-        const float lo=(a<b?a:b)<c?(a<b?a:b):c;
-        const float hi=(a>b?a:b)>c?(a>b?a:b):c;
-        if(hi-lo<=3.0f)return true;
-    }
-    return false;
-}
-static void updateTerrainVelocity(const Pose& pose){
-    // Host timestamps are independent of slow emulated Zelda frames.
-    // Derive a smoothed world-space velocity without modifying Link/Steve.
-    if(!tObservedAt){
-        tObservedPos={pose.position[0],pose.position[1],pose.position[2]};
-        tObservedAt=pose.host_ms;
-        return;
-    }
-    if(pose.host_ms<=tObservedAt)return;
-    const uint64_t dt=pose.host_ms-tObservedAt;
-    if(dt<65u)return; // avoid unstable speed estimates from 1-2ms intervals
-    const float dx=pose.position[0]-tObservedPos.x;
-    const float dz=pose.position[2]-tObservedPos.z;
-    const float secs=static_cast<float>(dt)*0.001f;
-    const float speed2=(dx*dx+dz*dz)/(secs*secs);
-    if(dt<=650u && speed2<=196.f){ // reject discontinuous teleports
-        const float k=0.6f;
-        tVelocity.x=tVelocity.x*(1.f-k)+k*dx/secs;
-        tVelocity.z=tVelocity.z*(1.f-k)+k*dz/secs;
-    }else{
-        tVelocity.x=0.f;tVelocity.z=0.f;
-    }
-    tObservedAt=pose.host_ms;
-    tObservedPos={pose.position[0],pose.position[1],pose.position[2]};
-}
-// WiiXLaunch modules are linked -nostdlib: never call libm sqrtf.
+static float terrainAbs(float a){return a<0.f?-a:a;}
 static float terrainSqrt(float x){
     if(x<=0.f)return 0.f;
     float a=x>1.f?x:1.f;
     for(unsigned i=0;i<7;i++)a=0.5f*(a+x/a);
     return a;
 }
+// Stable world-space tile indexing prevents re-querying the same centimeters
+// on every Minecraft tick (the old moving 3x3 centered on Steve did that).
+static int32_t terrainFloor(float x){
+    int32_t i=static_cast<int32_t>(x);
+    return static_cast<float>(i)>x?i-1:i;
+}
+static float terrainMin(float a,float b){return a<b?a:b;}
+static float terrainMax(float a,float b){return a>b?a:b;}
+static void updateTerrainVelocity(const Pose& pose){
+    if(!tObservedAt){
+        tObservedPos={pose.position[0],pose.position[1],pose.position[2]};
+        tObservedAt=pose.host_ms;return;
+    }
+    if(pose.host_ms<=tObservedAt)return;
+    const uint64_t dt=pose.host_ms-tObservedAt;
+    if(dt<50u)return;
+    const float dx=pose.position[0]-tObservedPos.x;
+    const float dz=pose.position[2]-tObservedPos.z;
+    const float secs=static_cast<float>(dt)*0.001f;
+    const float speed2=(dx*dx+dz*dz)/(secs*secs);
+    if(dt<=750u && speed2<=225.f){
+        constexpr float k=.55f;
+        tVelocity.x=tVelocity.x*(1.f-k)+k*dx/secs;
+        tVelocity.z=tVelocity.z*(1.f-k)+k*dz/secs;
+    }else{tVelocity.x=0;tVelocity.z=0;}
+    tObservedPos={pose.position[0],pose.position[1],pose.position[2]};
+    tObservedAt=pose.host_ms;
+}
 static Vec3Raw terrainLookahead(const Pose& pose){
-    const float vx=tVelocity.x,vz=tVelocity.z;
-    const float speed2=vx*vx+vz*vz;
-    float ox=0.f,oz=0.f;
-    if(speed2>0.16f){
-        ox=vx*kPredictSeconds;oz=vz*kPredictSeconds;
-    }else{
-        // At rest, prefetch slightly in the look direction before walking.
-        const float fx=pose.forward[0],fz=pose.forward[2];
-        const float d2=fx*fx+fz*fz;
-        if(d2>0.04f){
-            const float scale=1.5f/terrainSqrt(d2);
-            ox=fx*scale;oz=fz*scale;
+    float dx=tVelocity.x*0.85f,dz=tVelocity.z*0.85f;
+    const float v2=dx*dx+dz*dz;
+    if(v2<.4f){
+        dx=pose.forward[0]*2.f;dz=pose.forward[2]*2.f;
+    }
+    const float d2=dx*dx+dz*dz;
+    if(d2>36.f){const float mul=6.f/terrainSqrt(d2);dx*=mul;dz*=mul;}
+    return {pose.position[0]+dx,pose.position[1],pose.position[2]+dz};
+}
+static bool pointCached(int32_t ix,int32_t iz,uint64_t now,float& height,bool& hit){
+    for(unsigned i=0;i<kPointCacheSize;i++){
+        const PointCache& q=tPoints[i];
+        if(!q.valid||q.ix!=ix||q.iz!=iz)continue;
+        if(now>=q.at && now-q.at <= (q.hit?kHitExpireMs:kMissExpireMs)){
+            height=q.height;hit=q.hit!=0;return true;
         }
+        return false;
     }
-    const float l2=ox*ox+oz*oz;
-    if(l2>kMaxLookahead*kMaxLookahead){
-        const float m=kMaxLookahead/terrainSqrt(l2);
-        ox*=m;oz*=m;
+    return false;
+}
+static void storePoint(int32_t ix,int32_t iz,uint64_t now,float height,bool hit){
+    unsigned slot=kPointCacheSize;
+    for(unsigned i=0;i<kPointCacheSize;i++){
+        if(tPoints[i].valid && tPoints[i].ix==ix && tPoints[i].iz==iz){slot=i;break;}
     }
-    return {pose.position[0]+ox,pose.position[1],pose.position[2]+oz};
+    if(slot==kPointCacheSize){
+        slot=tPointCursor++%kPointCacheSize;
+    }
+    tPoints[slot]={ix,iz,height,now,static_cast<uint8_t>(hit),1};
+}
+static bool tileCached(int32_t ix,int32_t iz,uint64_t now){
+    for(unsigned i=0;i<kTileCacheSize;i++){
+        const TileCache& t=tTiles[i];
+        if(!t.valid||t.ix!=ix||t.iz!=iz)continue;
+        if(now>=t.at && now-t.at<=(t.gotHit?kTileHitExpireMs:kTileMissExpireMs))return true;
+        return false;
+    }
+    return false;
+}
+static void storeTile(int32_t ix,int32_t iz,uint64_t now,bool hit){
+    unsigned slot=kTileCacheSize;
+    for(unsigned i=0;i<kTileCacheSize;i++){
+        if(tTiles[i].valid&&tTiles[i].ix==ix&&tTiles[i].iz==iz){slot=i;break;}
+    }
+    if(slot==kTileCacheSize)slot=tTileCursor++%kTileCacheSize;
+    tTiles[slot]={ix,iz,now,static_cast<uint8_t>(hit),1};
 }
 static void initializeTerrainQuery(){
-    if(tTried)return;
-    tTried=true;
+    if(tTried)return;tTried=true;
     if(!S::ResolveTarget)return;
     tAlloc=reinterpret_cast<TerrainAlloc>(S::ResolveTarget(0x00fc5590u,0));
     tLayers=reinterpret_cast<TerrainLayers>(S::ResolveTarget(0x00fc36a4u,0));
     tSetRay=reinterpret_cast<TerrainSetRay>(S::ResolveTarget(0x00fc38a0u,0));
     tSubmit=reinterpret_cast<TerrainSubmit>(S::ResolveTarget(0x00fc55acu,0));
     tRelease=reinterpret_cast<TerrainRelease>(S::ResolveTarget(0x00fc55d4u,0));
-    tReady=tAlloc && tLayers && tSetRay && tSubmit && tRelease;
+    tReady=tAlloc&&tLayers&&tSetRay&&tSubmit&&tRelease;
+    if(tReady)g_BotwCraftLiveMailbox.terrain_ring_magic=0x32525254u; // TRR2
     S::Log(tReady?"[BOTW_NATIVE] TERRAIN_HAVOK_REQUEST_SYMBOLS_READY":
                  "[BOTW_NATIVE] TERRAIN_HAVOK_SYMBOLS_MISSING");
 }
-static void publishHavokGrid(){
-    const uint32_t next=g_BotwCraftLiveMailbox.terrain_seq+2u;
-    g_BotwCraftLiveMailbox.terrain_seq=next-1u;
-    g_BotwCraftLiveMailbox.terrain_mask=tMask;
-    g_BotwCraftLiveMailbox.terrain_center[0]=tCenter.x;
-    g_BotwCraftLiveMailbox.terrain_center[1]=tCenter.y;
-    g_BotwCraftLiveMailbox.terrain_center[2]=tCenter.z;
-    for(unsigned i=0;i<9;i++)
-        g_BotwCraftLiveMailbox.terrain_heights[i]=tHeights[i];
-    __atomic_thread_fence(__ATOMIC_RELEASE);
-    g_BotwCraftLiveMailbox.terrain_seq=next;
-    if(!tGridComplete){
-        tGridComplete=true;
-        S::Log(tMask ? "[BOTW_NATIVE] TERRAIN_FIRST_GRID_WITH_HITS":
-                     "[BOTW_NATIVE] TERRAIN_FIRST_GRID_WITHOUT_HITS");
+static bool hasWalkableTriangle(const Job& job){
+    constexpr unsigned faces[8][3]={
+        {0,3,1},{1,3,4},{1,4,2},{2,4,5},
+        {3,6,4},{4,6,7},{4,7,5},{5,7,8}};
+    for(const auto& f:faces){
+        if(!(job.mask&(1u<<f[0])) || !(job.mask&(1u<<f[1])) || !(job.mask&(1u<<f[2])))continue;
+        const float a=job.heights[f[0]],b=job.heights[f[1]],c=job.heights[f[2]];
+        const float lo=terrainMin(terrainMin(a,b),c);
+        const float hi=terrainMax(terrainMax(a,b),c);
+        if(hi-lo<=3.f)return true;
     }
-    if(tMask && !tLogged){
-        tLogged=true;
-        S::Log("[BOTW_NATIVE] TERRAIN_HAVOK_FIRST_GROUND_HIT");
-    }
-    ++tGridNumber;
-    // Nine asynchronous requests per grid, never hundreds per frame.
-    // Rate-limited diagnostic of sparse terrain samples.
-    if(tGridNumber==1 && !tMask)
-        S::Log("[BOTW_NATIVE] TERRAIN_GRID_NO_WALKABLE_GROUND");
+    return false;
 }
-static void sampleHavokTerrain(const Pose& pose) {
-    initializeTerrainQuery();
-    if(!tReady)return;
-    updateTerrainVelocity(pose);
-    if(!tGridActive){
-        if(tPauseTicks){--tPauseTicks;return;}
-        tCenter=terrainLookahead(pose);
-        tNext=0;tFinishedCount=0;tPendingCount=0;tMask=0;tWaitTicks=0;tPartialPublishes=0;
-        for(unsigned i=0;i<9;i++){tHeights[i]=0.0f;tPending[i]=nullptr;}
-        tGridActive=true;
+static void publishHavokGrid(Job& job){
+    // Global monotonically increasing seq; ring entry not overwritten until 64
+    // later grids. The Rust consumer drains and validates every sequence.
+    tSeq+=2u;
+    Mailbox::TerrainGrid& slot=g_BotwCraftLiveMailbox.terrain_ring[
+        g_BotwCraftLiveMailbox.terrain_ring_write%kRingSize];
+    slot.seq=tSeq;
+    slot.mask=job.mask;
+    slot.center[0]=job.center.x;
+    slot.center[1]=job.center.y;
+    slot.center[2]=job.center.z;
+    for(unsigned i=0;i<9;i++)slot.heights[i]=job.heights[i];
+    __atomic_thread_fence(__ATOMIC_RELEASE);
+    ++g_BotwCraftLiveMailbox.terrain_ring_write;
+    // Legacy mailbox remains available for diagnostics but Rust V2 reads ring.
+    g_BotwCraftLiveMailbox.terrain_seq=tSeq-1;
+    g_BotwCraftLiveMailbox.terrain_mask=job.mask;
+    g_BotwCraftLiveMailbox.terrain_center[0]=job.center.x;
+    g_BotwCraftLiveMailbox.terrain_center[1]=job.center.y;
+    g_BotwCraftLiveMailbox.terrain_center[2]=job.center.z;
+    for(unsigned i=0;i<9;i++)g_BotwCraftLiveMailbox.terrain_heights[i]=job.heights[i];
+    __atomic_thread_fence(__ATOMIC_RELEASE);
+    g_BotwCraftLiveMailbox.terrain_seq=tSeq;
+    job.lastPublishedMask=job.mask;
+    job.lastPublishedFinished=job.finished;
+    ++tGridCount;
+    if(job.mask && !tLogged){tLogged=true;S::Log("[BOTW_NATIVE] TERRAIN_HAVOK_FIRST_GROUND_HIT");}
+}
+static bool chooseTile(const Pose& pose,int32_t& rx,int32_t& rz){
+    const Vec3Raw predicted=terrainLookahead(pose);
+    const int32_t px=terrainFloor(pose.position[0]/kTile);
+    const int32_t pz=terrainFloor(pose.position[2]/kTile);
+    const int32_t fx=terrainFloor(predicted.x/kTile);
+    const int32_t fz=terrainFloor(predicted.z/kTile);
+    const uint64_t now=pose.host_ms;
+    float best=1e10f;bool found=false;
+    // Scan a region around the current feet AND 6m ahead of running speed.
+    // Favor local missing ground first, but prefetch ahead before reaching it.
+    for(int32_t x=px-6;x<=px+6;x++)for(int32_t z=pz-6;z<=pz+6;z++){
+        const int32_t dx=x-px,dz=z-pz;
+        const int32_t ex=x-fx,ez=z-fz;
+        if(dx*dx+dz*dz>45 && ex*ex+ez*ez>45)continue;
+        if(tileCached(x,z,now))continue;
+        bool underway=false;
+        for(unsigned j=0;j<kJobs;j++){
+            if(tJobs[j].active && (tJobs[j].ix==x&&tJobs[j].iz==z ||
+               (terrainAbs(static_cast<float>(tJobs[j].ix-x))<=1.f &&
+                terrainAbs(static_cast<float>(tJobs[j].iz-z))<=1.f)))underway=true;
+        }
+        if(underway)continue;
+        const float centerDist=static_cast<float>(dx*dx+dz*dz);
+        const float lookDist=static_cast<float>(ex*ex+ez*ez);
+        // Strong preference to cover the next step, then ahead of movement.
+        const float score=terrainMin(centerDist,lookDist*0.78f+1.2f)+
+                          centerDist*0.025f;
+        if(score<best){best=score;rx=x;rz=z;found=true;}
     }
-    // Poll completed results using RayCast::_70 written by postCast().
-    // isRequestFinished checks the *FREE LIST*, not worker completion.
+    return found;
+}
+static void beginTile(Job& j,int32_t ix,int32_t iz,const Pose& pose){
+    j=Job{};j.active=true;j.ix=ix;j.iz=iz;j.started=pose.host_ms;
+    j.center={static_cast<float>(ix)*kTile,pose.position[1],static_cast<float>(iz)*kTile};
     for(unsigned i=0;i<9;i++){
-        void* request=tPending[i];
-        if(!request)continue;
-        const uintptr_t addr=reinterpret_cast<uintptr_t>(request);
-        const volatile uint32_t* done=reinterpret_cast<const volatile uint32_t*>(addr+0x70);
-        if(__atomic_load_n(done,__ATOMIC_ACQUIRE)!=1u)continue;
-        tPending[i]=nullptr;
-        --tPendingCount;
-        ++tFinishedCount;
-        ++tCompleted;
-        if(!tFirstFinished){tFirstFinished=true;S::Log("[BOTW_NATIVE] TERRAIN_QUERY_FIRST_RESULT_READY");}
-        const volatile uint8_t* hit=reinterpret_cast<const volatile uint8_t*>(addr+0x30);
-        const volatile float* normalY=reinterpret_cast<const volatile float*>(addr+0x38);
-        const volatile float* fraction=reinterpret_cast<const volatile float*>(addr+0x40);
-        const float frac=*fraction;
-        const float ny=*normalY;
-        if(*hit && finiteFloat(frac) && frac>=0.0f && frac<=1.0f &&
-           finiteFloat(ny) && ny>0.42f){
-            tHeights[i]=tStarts[i].y+(tEnds[i].y-tStarts[i].y)*frac;
-            tMask|=(1u<<i);
-            tHasGround=true;
-            tLastGround=tHeights[i];
-        }else{
-            ++tMissed;
-            if(tMissed>=36u && !tNoHitWarned){
-                tNoHitWarned=true;
-                S::Log("[BOTW_NATIVE] TERRAIN_PHYSICS_RESPONDS_BUT_NO_WALKABLE_HITS");
-            }
+        const int32_t px=ix*2+static_cast<int32_t>(i%3)-1;
+        const int32_t pz=iz*2+static_cast<int32_t>(i/3)-1;
+        float height=0;bool hit=false;
+        if(pointCached(px,pz,pose.host_ms,height,hit)){
+            ++j.finished;
+            if(hit){j.mask|=(1u<<i);j.heights[i]=height;}
         }
-        tRelease(request);
     }
-    if(tFinishedCount==9){
-        publishHavokGrid();
-        tGridActive=false;
-        tPauseTicks=1; // one physics frame to drain before next forward grid
-        return;
+}
+static unsigned tRoundRobin=0;
+static void sampleHavokTerrain(const Pose& pose){
+    initializeTerrainQuery();if(!tReady)return;
+    updateTerrainVelocity(pose);
+    // Do not continually resample the same squares when standing still.
+    for(unsigned j=0;j<kJobs;j++)if(!tJobs[j].active){
+        int32_t ix=0,iz=0;
+        if(chooseTile(pose,ix,iz))beginTile(tJobs[j],ix,iz,pose);
     }
-    // Don't wait for the slowest rays: publish truthful partial triangles as
-    // soon as their three Havok heights are available.  The final grid
-    // replaces these partial meshes when all nine requests finish.
-    if(tPartialPublishes<2 && tFinishedCount>=3u &&
-       (tPartialPublishes==0 || tFinishedCount>=6u) && hasWalkableTriangle()){
-        publishHavokGrid();
-        ++tPartialPublishes;
-    }
-    if(++tWaitTicks>=240u && !tStallWarned){
-        tStallWarned=true;
-        S::Log("[BOTW_NATIVE] TERRAIN_QUERY_WAITING_FOR_PHYSICS");
-    }
-    while(tNext<9 && tPendingCount<kTerrainConcurrency){
-        unsigned i=kPriorityRay[tNext++];
-        const unsigned gx=i%3u, gz=i/3u;
-        const float x=tCenter.x+(static_cast<float>(gx)-1.f)*kTerrainGridStep;
-        const float z=tCenter.z+(static_cast<float>(gz)-1.f)*kTerrainGridStep;
-        // Retain the latest confirmed ground as a ray origin reference if
-        // Minecraft fell through a missing region. This is for *sampling*
-        // only and NEVER teleports either Steve or Link.
-        const float reference=(tHasGround && tCenter.y<tLastGround-12.0f)
-            ? tLastGround : tCenter.y;
-        tStarts[i]={x,reference+48.0f,z};
-        tEnds[i]={x,reference-64.0f,z};
-        void* request=tAlloc(nullptr,15); // GroundHit::HitAll
-        if(!request){
-            if(!tAllocWarned){tAllocWarned=true;S::Log("[BOTW_NATIVE] TERRAIN_ALLOC_RETURNED_NULL");}
-            // Don't drop this point: retry next tick after earlier jobs finish.
-            --tNext;
-            break;
-        }
-        volatile uint32_t* done=reinterpret_cast<volatile uint32_t*>(
-            reinterpret_cast<uintptr_t>(request)+0x70);
-        __atomic_store_n(done,0u,__ATOMIC_RELEASE);
-        tLayers(request,8);  // EntityGround
-        tLayers(request,9);  // EntityGroundSmooth
-        tLayers(request,10); // EntityGroundRough
-        tLayers(request,2);  // EntityGroundObject
-        tSetRay(request,&tStarts[i],&tEnds[i]);
-        if(!tSubmit(request,0)){
-            if(!tSubmitWarned){tSubmitWarned=true;S::Log("[BOTW_NATIVE] TERRAIN_SUBMIT_RETURNED_FALSE");}
+    for(unsigned j=0;j<kJobs;j++){
+        Job& job=tJobs[j];if(!job.active)continue;
+        for(unsigned i=0;i<9;i++){
+            void* request=job.pending[i];if(!request)continue;
+            const uintptr_t addr=reinterpret_cast<uintptr_t>(request);
+            const volatile uint32_t* done=reinterpret_cast<const volatile uint32_t*>(addr+0x70);
+            if(__atomic_load_n(done,__ATOMIC_ACQUIRE)!=1u)continue;
+            job.pending[i]=nullptr;--job.pendingCount;++job.finished;++tCompleted;
+            if(!tFirstFinished){tFirstFinished=true;S::Log("[BOTW_NATIVE] TERRAIN_QUERY_FIRST_RESULT_READY");}
+            const float frac=*reinterpret_cast<const volatile float*>(addr+0x40);
+            const float ny=*reinterpret_cast<const volatile float*>(addr+0x38);
+            const bool hit=*reinterpret_cast<const volatile uint8_t*>(addr+0x30)!=0 &&
+                finiteFloat(frac)&&frac>=0.f&&frac<=1.f&&finiteFloat(ny)&&ny>0.42f;
+            const float height=hit?job.starts[i].y+(job.ends[i].y-job.starts[i].y)*frac:0.f;
+            if(hit){job.mask|=1u<<i;job.heights[i]=height;tLastGround=height;tHasGround=true;}
+            else {++tMissed;if(tMissed>=36u&&!tNoHitWarned){tNoHitWarned=true;
+                S::Log("[BOTW_NATIVE] TERRAIN_PHYSICS_RESPONDS_BUT_NO_WALKABLE_HITS");}}
+            const int32_t px=job.ix*2+static_cast<int32_t>(i%3)-1;
+            const int32_t pz=job.iz*2+static_cast<int32_t>(i/3)-1;
+            storePoint(px,pz,pose.host_ms,height,hit);
             tRelease(request);
-            --tNext;
-            break;
         }
-        tPending[i]=request;
-        ++tPendingCount;
-        if(!tFirstSubmitted){
-            tFirstSubmitted=true;
-            S::Log("[BOTW_NATIVE] TERRAIN_QUERY_FIRST_SUBMITTED");
+        if(job.finished==9){
+            if(job.mask && (job.finished!=job.lastPublishedFinished ||
+                job.mask!=job.lastPublishedMask))publishHavokGrid(job);
+            storeTile(job.ix,job.iz,pose.host_ms,job.mask!=0);
+            job.active=false;
+        }else if(job.partialCount<2 && job.finished>=4u &&
+              (job.partialCount==0||job.finished>=7u) &&
+              hasWalkableTriangle(job)){
+            publishHavokGrid(job);++job.partialCount;
         }
+    }
+    unsigned inFlight=0;
+    for(unsigned j=0;j<kJobs;j++)inFlight+=tJobs[j].pendingCount;
+    unsigned submitted=0;
+    for(unsigned q=0;q<kJobs && submitted<kSubmitsPerTick;q++){
+        Job& job=tJobs[(q+tRoundRobin)%kJobs];if(!job.active)continue;
+        while(job.next<9 && submitted<kSubmitsPerTick && inFlight<kMaxInFlight){
+            const unsigned i=kPriority[job.next++];
+            const int32_t px=job.ix*2+static_cast<int32_t>(i%3)-1;
+            const int32_t pz=job.iz*2+static_cast<int32_t>(i/3)-1;
+            float cachedH=0;bool cachedHit=false;
+            // Don't request samples already reused by beginTile().
+            if(pointCached(px,pz,pose.host_ms,cachedH,cachedHit))continue;
+            const float x=static_cast<float>(px)*kStep;
+            const float z=static_cast<float>(pz)*kStep;
+            const float reference=tHasGround&&job.center.y<tLastGround-12.f?
+                tLastGround:job.center.y;
+            job.starts[i]={x,reference+48.f,z};
+            job.ends[i]={x,reference-64.f,z};
+            void* request=tAlloc(nullptr,15);
+            if(!request){if(!tAllocWarned){tAllocWarned=true;S::Log("[BOTW_NATIVE] TERRAIN_ALLOC_RETURNED_NULL");}
+                --job.next;break;}
+            volatile uint32_t* done=reinterpret_cast<volatile uint32_t*>(
+                reinterpret_cast<uintptr_t>(request)+0x70);
+            __atomic_store_n(done,0u,__ATOMIC_RELEASE);
+            tLayers(request,8);tLayers(request,9);tLayers(request,10);tLayers(request,2);
+            tSetRay(request,&job.starts[i],&job.ends[i]);
+            if(!tSubmit(request,0)){
+                if(!tSubmitWarned){tSubmitWarned=true;S::Log("[BOTW_NATIVE] TERRAIN_SUBMIT_RETURNED_FALSE");}
+                tRelease(request);--job.next;break;
+            }
+            job.pending[i]=request;++job.pendingCount;++inFlight;++submitted;
+            if(!tFirstSubmitted){tFirstSubmitted=true;S::Log("[BOTW_NATIVE] TERRAIN_QUERY_FIRST_SUBMITTED");}
+        }
+    }
+    ++tRoundRobin;
+    if(tCompleted==0 && ++tGridCount==300 && !tStallWarned){
+        tStallWarned=true;S::Log("[BOTW_NATIVE] TERRAIN_QUERY_WAITING_FOR_PHYSICS");
     }
 }
 extern "C" __attribute__((used)) void BotwCraftPlayerTick() {

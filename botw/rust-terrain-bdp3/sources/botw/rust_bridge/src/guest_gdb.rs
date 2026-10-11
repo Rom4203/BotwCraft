@@ -197,6 +197,10 @@ pub fn transport_loop(state:Arc<Mutex<Engine>>){
    let mut latency_count=0u64;
    let mut terrain=TerrainRelay::default();
    let mut last_terrain=Instant::now()-Duration::from_secs(1);
+   let mut terrain_ring_read=0u32;
+   let mut terrain_ring_available=false;
+   let mut terrain_ring_checked=false;
+   let mut terrain_ring_lost=0u32;
    let mut terrain_disarmed_at:Option<Instant>=None;
    let mut ever_havok=false;
    let mut last_havok_warning=Instant::now()-Duration::from_secs(10);
@@ -260,33 +264,78 @@ pub fn transport_loop(state:Arc<Mutex<Engine>>){
        last_pose=None;
        println!("[RUST_LINK] Disarmed once. Read-only until active input.");
     }
-    // Read tiny native terrain mailbox at up to 20Hz (50ms) rather than 4Hz. Native NX150
-    // WiiXLaunch samples actual Havok surfaces on the player callback.
-    // Recover gracefully if the module lacks this mailbox extension:
-    // DO NOT tear down the 120 Hz camera/input link on a raycast error.
-    if armed && authenticated && last_terrain.elapsed()>=Duration::from_millis(50){
+    // V2 mailbox: 64-slot independent terrain mesh ring at guest +496.
+    // No 56-byte tile can be overwritten before Rust has 64 newer tiles,
+    // even when the emulator's GDB debugger pauses for an input refresh.
+    // 20ms polling is deliberately bounded; never delay the BDP3 camera
+    // with an unbounded while-loop or hundreds of Havok read requests.
+    if armed && authenticated && last_terrain.elapsed()>=Duration::from_millis(20){
       terrain_disarmed_at=None;
-      match remote.read(addr+432,56){
-        Ok(samples)=>{
-          if samples.len()==56 && last_havok_diagnostic.elapsed()>=Duration::from_secs(8) {
-            let terrain_seq=u32::from_le_bytes(samples[0..4].try_into().unwrap());
-            let mask=u32::from_le_bytes(samples[4..8].try_into().unwrap());
-            if terrain_seq==0 {
-              eprintln!("[TERRAIN] waiting for first Havok grid (native mailbox seq=0; no collision mesh yet)");
-            }else if mask==0 {
-              eprintln!("[TERRAIN] Havok grid seq={terrain_seq}, mask=0 (raycasts completed but found no walkable ground)");
+      if !terrain_ring_checked {
+        match remote.read(addr+488,8){
+          Ok(h)=>{
+            terrain_ring_available=u32::from_le_bytes(h[4..8].try_into().unwrap())==0x32525254;
+            terrain_ring_checked=true;
+            println!("[TERRAIN] native 0.68m tile ring: {}",if terrain_ring_available{"64 grid slots, 20ms poll"}else{"not installed; legacy fallback"});
+          },
+          Err(_)=>{} // wait until a valid player frame produces the ring marker
+        }
+      }
+      if terrain_ring_available {
+        match remote.read(addr+488,8){
+          Ok(h)=>{
+            let write=u32::from_le_bytes(h[0..4].try_into().unwrap());
+            let pending=write.wrapping_sub(terrain_ring_read);
+            if pending>64 {
+              let dropped=pending-64;
+              terrain_ring_lost=terrain_ring_lost.saturating_add(dropped);
+              terrain_ring_read=write.wrapping_sub(64);
+              eprintln!("[TERRAIN] GDB ring fell behind, skipped {} old tiles (total lost={}); BDP3 still active",dropped,terrain_ring_lost);
             }
-            last_havok_diagnostic=Instant::now();
+            for _ in 0..6u32 {
+              if terrain_ring_read==write {break}
+              let index=terrain_ring_read%64;
+              // Entries are 56B and published with a release store of head.
+              let location=addr+496+index as usize*56;
+              match remote.read(location,56){
+                Ok(sample)=>{
+                  if sample.len()!=56{break}
+                  let seq=u32::from_le_bytes(sample[0..4].try_into().unwrap());
+                  if seq==0 || seq&1==1{break}
+                  let mut engine=state.lock().map_err(|_|other("bridge mutex poisoned"))?;
+                  if terrain.ingest(&sample,&pose,&mut engine.mem){ever_havok=true}
+                  terrain_ring_read=terrain_ring_read.wrapping_add(1);
+                }
+                Err(e)=>{
+                  if last_havok_warning.elapsed()>=Duration::from_secs(5){
+                    eprintln!("[TERRAIN] failed to read native ring slot ({e}), still using BDP3");
+                    last_havok_warning=Instant::now();
+                  }
+                  break;
+                }
+              }
+            }
           }
+          Err(e)=>{
+            if last_havok_warning.elapsed()>=Duration::from_secs(5){
+              eprintln!("[TERRAIN] Havok ring header unavailable ({e}); gameplay link kept alive");
+              last_havok_warning=Instant::now();
+            }
+          }
+        }
+      }else{
+        // Backward-compatible stream, only when a previous Zelda module
+        // doesn't implement the new ring protocol.
+        if let Ok(sample)=remote.read(addr+432,56){
           let mut engine=state.lock().map_err(|_|other("bridge mutex poisoned"))?;
-          if terrain.ingest(&samples,&pose,&mut engine.mem){ever_havok=true}
+          if terrain.ingest(&sample,&pose,&mut engine.mem){ever_havok=true}
         }
-        Err(e)=>{
-          if last_havok_warning.elapsed()>=Duration::from_secs(5){
-            eprintln!("[TERRAIN] Havok mailbox unavailable ({e}); gameplay link kept alive");
-            last_havok_warning=Instant::now();
-          }
+      }
+      if last_havok_diagnostic.elapsed()>=Duration::from_secs(10){
+        if terrain_ring_available {
+          println!("[TERRAIN] fine ring consumed={}, missed_slots={} (no old tile re-scan)",terrain_ring_read,terrain_ring_lost);
         }
+        last_havok_diagnostic=Instant::now();
       }
       last_terrain=Instant::now();
     }else if !armed && ever_havok{
