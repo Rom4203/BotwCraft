@@ -26,15 +26,31 @@ fn load_addr()->Option<usize>{
    .unwrap_or_else(||Path::new("logs").join("botwcraft.log"));
  parse_guest_addr(&fs::read_to_string(path).ok()?)
 }
-struct Remote{stream:TcpStream}
+// GDB packets are 2x hex-encoded. Reading the socket one byte at a time
+// previously required thousands of kernel calls per 16-tile terrain batch.
+struct Remote{
+ stream:TcpStream,
+ buffer:[u8;8192],
+ at:usize,
+ end:usize,
+}
 impl Remote{
+ fn next_byte(&mut self)->io::Result<u8>{
+  if self.at==self.end {
+   self.end=self.stream.read(&mut self.buffer)?;
+   self.at=0;
+   if self.end==0{return Err(other("GDB socket closed"))}
+  }
+  let b=self.buffer[self.at];self.at+=1;Ok(b)
+ }
+
  fn connect()->io::Result<Self>{
   let address=SocketAddr::from(([127,0,0,1],22225));
   let socket=TcpStream::connect_timeout(&address,Duration::from_secs(1))?;
   socket.set_nodelay(true)?; // prevent Nagle/ACK delays in small GDB packets
   socket.set_read_timeout(Some(Duration::from_secs(3)))?;
   socket.set_write_timeout(Some(Duration::from_secs(3)))?;
-  let mut r=Self{stream:socket};
+  let mut r=Self{stream:socket,buffer:[0;8192],at:0,end:0};
   let supported=r.request("qSupported")?;
   println!("[RUST_LINK] Ryujinx GDB connected: {}",supported.chars().take(100).collect::<String>());
   Ok(r)
@@ -46,14 +62,13 @@ impl Remote{
   self.stream.flush()?;
   let mut current=Vec::<u8>::new();let mut phase=0u8;
   loop{
-   let mut c=[0u8;1];self.stream.read_exact(&mut c)?;
+   let c=self.next_byte()?;
    match phase{
-    0=>{if c[0]==b'$'{phase=1;current.clear();}}
-    1=>{if c[0]==b'#'{phase=2;}else if current.len()<0x100000 {current.push(c[0]);}
+    0=>{if c==b'$'{phase=1;current.clear();}}
+    1=>{if c==b'#'{phase=2;}else if current.len()<0x100000 {current.push(c);}
        else{return Err(other("GDB oversize response"))}}
     2=>{
-     let mut last=[0u8;1];self.stream.read_exact(&mut last)?;
-     let sum_hex=[c[0],last[0]];
+     let sum_hex=[c,self.next_byte()?];
      let expected=std::str::from_utf8(&sum_hex).ok().and_then(|s|u8::from_str_radix(s,16).ok());
      let actual=current.iter().fold(0u8,|a,b|a.wrapping_add(*b));
      if expected!=Some(actual){self.stream.write_all(b"-")?;return Err(other("GDB checksum error"))}
@@ -65,7 +80,7 @@ impl Remote{
   }
  }
  fn read(&mut self,addr:usize,len:usize)->io::Result<Vec<u8>>{
-  if len==0||len>256{return Err(other("GDB read out of bounds"))}
+  if len==0||len>1008{return Err(other("GDB read out of bounds"))}
   let reply=self.request(&format!("m{addr:x},{len:x}"))?;
   if reply.starts_with('E') || reply.len()!=len*2{return Err(other("GDB read refused or invalid size"))}
   let mut out=Vec::with_capacity(len);
@@ -205,6 +220,11 @@ pub fn transport_loop(state:Arc<Mutex<Engine>>){
    let mut ever_havok=false;
    let mut last_havok_warning=Instant::now()-Duration::from_secs(10);
    let mut last_havok_diagnostic=Instant::now()-Duration::from_secs(10);
+   let mut terrain_stats_received=0usize;
+   let mut terrain_stats_accepted=0usize;
+   let mut terrain_stats_read_us=0u128;
+   let mut terrain_stats_mesh_us=0u128;
+   let mut terrain_stats_batches=0u128;
    loop{
     // Player XYZ is sampled every 100ms, NOT at every transmitted Minecraft
     // frame. That avoids a 4th GDB roundtrip on the critical camera path.
@@ -267,16 +287,16 @@ pub fn transport_loop(state:Arc<Mutex<Engine>>){
     // V2 mailbox: 64-slot independent terrain mesh ring at guest +496.
     // No 56-byte tile can be overwritten before Rust has 64 newer tiles,
     // even when the emulator's GDB debugger pauses for an input refresh.
-    // 20ms polling is deliberately bounded; never delay the BDP3 camera
+    // 10ms polling is deliberately bounded; never delay the BDP3 camera
     // with an unbounded while-loop or hundreds of Havok read requests.
-    if armed && authenticated && last_terrain.elapsed()>=Duration::from_millis(20){
+    if armed && authenticated && last_terrain.elapsed()>=Duration::from_millis(10){
       terrain_disarmed_at=None;
       if !terrain_ring_checked {
         match remote.read(addr+488,8){
           Ok(h)=>{
             terrain_ring_available=u32::from_le_bytes(h[4..8].try_into().unwrap())==0x32525254;
             terrain_ring_checked=true;
-            println!("[TERRAIN] native 0.68m tile ring: {}",if terrain_ring_available{"64 grid slots, 20ms poll"}else{"not installed; legacy fallback"});
+            println!("[TERRAIN] native 0.68m tile ring: {}",if terrain_ring_available{"64 grid slots, 10ms poll, batched"}else{"not installed; legacy fallback"});
           },
           Err(_)=>{} // wait until a valid player frame produces the ring marker
         }
@@ -292,28 +312,52 @@ pub fn transport_loop(state:Arc<Mutex<Engine>>){
               terrain_ring_read=write.wrapping_sub(64);
               eprintln!("[TERRAIN] GDB ring fell behind, skipped {} old tiles (total lost={}); BDP3 still active",dropped,terrain_ring_lost);
             }
-            for _ in 0..6u32 {
-              if terrain_ring_read==write {break}
-              let index=terrain_ring_read%64;
-              // Entries are 56B and published with a release store of head.
-              let location=addr+496+index as usize*56;
-              match remote.read(location,56){
-                Ok(sample)=>{
-                  if sample.len()!=56{break}
-                  let seq=u32::from_le_bytes(sample[0..4].try_into().unwrap());
-                  if seq==0 || seq&1==1{break}
-                  let mut engine=state.lock().map_err(|_|other("bridge mutex poisoned"))?;
-                  if terrain.ingest(&sample,&pose,&mut engine.mem){ever_havok=true}
-                  terrain_ring_read=terrain_ring_read.wrapping_add(1);
+            // Read up to sixteen contiguous 56-byte terrain tiles per GDB
+            // request. The guest ring can wrap at index 63; split only there.
+            // Save the whole group before touching the expensive Minecraft
+            // collider map, so the repeated 8-block region mesh is sent once.
+            let mut samples=Vec::with_capacity(32*56);
+            let mut consumed=0u32;
+            let started=Instant::now();
+            while terrain_ring_read!=write && consumed<32 {
+              let index=(terrain_ring_read%64) as usize;
+              let count=(write.wrapping_sub(terrain_ring_read) as usize)
+                .min(64-index).min(16).min(32-consumed as usize);
+              let location=addr+496+index*56;
+              match remote.read(location,count*56){
+                Ok(bytes)=>{
+                  let mut accepted=0usize;
+                  for sample in bytes.chunks_exact(56){
+                    let seq=u32::from_le_bytes(sample[0..4].try_into().unwrap());
+                    if seq==0 || seq&1!=0 {break}
+                    samples.extend_from_slice(sample);
+                    accepted+=1;
+                  }
+                  terrain_ring_read=terrain_ring_read.wrapping_add(accepted as u32);
+                  consumed+=accepted as u32;
+                  if accepted!=count{break}
                 }
                 Err(e)=>{
                   if last_havok_warning.elapsed()>=Duration::from_secs(5){
-                    eprintln!("[TERRAIN] failed to read native ring slot ({e}), still using BDP3");
+                    eprintln!("[TERRAIN] GDB burst read failed ({e}), BDP3 remains active");
                     last_havok_warning=Instant::now();
                   }
                   break;
                 }
               }
+            }
+            let read_us=started.elapsed().as_micros();
+            if !samples.is_empty(){
+              let mesh_start=Instant::now();
+              let mut engine=state.lock().map_err(|_|other("bridge mutex poisoned"))?;
+              let count=terrain.ingest_batch(&samples,&pose,&mut engine.mem);
+              let mesh_us=mesh_start.elapsed().as_micros();
+              if count>0 {ever_havok=true}
+              terrain_stats_received+=samples.len()/56;
+              terrain_stats_accepted+=count;
+              terrain_stats_read_us+=read_us;
+              terrain_stats_mesh_us+=mesh_us;
+              terrain_stats_batches+=1;
             }
           }
           Err(e)=>{
@@ -333,7 +377,10 @@ pub fn transport_loop(state:Arc<Mutex<Engine>>){
       }
       if last_havok_diagnostic.elapsed()>=Duration::from_secs(10){
         if terrain_ring_available {
-          println!("[TERRAIN] fine ring consumed={}, missed_slots={} (no old tile re-scan)",terrain_ring_read,terrain_ring_lost);
+          println!("[TERRAIN] fine ring consumed={} lost={} batches={} received={} accepted={} GDB_read_avg_us={} mesh_avg_us={} (batched regions)",terrain_ring_read,terrain_ring_lost,terrain_stats_batches,terrain_stats_received,terrain_stats_accepted,
+            terrain_stats_read_us/terrain_stats_batches.max(1),terrain_stats_mesh_us/terrain_stats_batches.max(1));
+          terrain_stats_received=0;terrain_stats_accepted=0;
+          terrain_stats_read_us=0;terrain_stats_mesh_us=0;terrain_stats_batches=0;
         }
         last_havok_diagnostic=Instant::now();
       }

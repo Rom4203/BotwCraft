@@ -210,31 +210,46 @@ pub struct TerrainRelay {
  stats_updates:u32,
 }
 impl TerrainRelay {
+ // Legacy single-sample protocol still delegates to the same batch path.
  pub fn ingest(&mut self,guest:&[u8],pose:&[u8],map:&mut SharedMap)->bool{
-  if guest.len()!=SIZE || pose.len()<100{return false}
-  let seq=u32::from_le_bytes(guest[0..4].try_into().unwrap());
-  if seq==0 || seq&1==1 || seq==self.seq{return false}
-  let Some(tris)=triangles(guest,pose)else{return false};
-  let mc=[at(pose,76).unwrap(),at(pose,80).unwrap(),at(pose,84).unwrap()];
-  let zelda=[at(pose,88).unwrap(),at(pose,92).unwrap(),at(pose,96).unwrap()];
-  let center=[at(guest,8).unwrap()-zelda[0]+mc[0],
-              at(guest,12).unwrap()-zelda[1]+mc[1],
-              at(guest,16).unwrap()-zelda[2]+mc[2]];
-  let current=[at(pose,32).unwrap()-zelda[0]+mc[0],
-               at(pose,36).unwrap()-zelda[1]+mc[1],
-               at(pose,40).unwrap()-zelda[2]+mc[2]];
+  self.ingest_batch(guest,pose,map)>0
+ }
+ // Merge all patches received since the previous 10ms poll first, then
+ // rebuild each affected Minecraft region exactly ONCE. This is critical:
+ // sending the same 8x8 block collision region for every 1.36m tile made
+ // the renderer+integrated server fall behind during normal walking.
+ pub fn ingest_batch(&mut self,samples:&[u8],pose:&[u8],map:&mut SharedMap)->usize{
+  if pose.len()<100{return 0}
+  let mc=[at(pose,76).unwrap_or(0.),at(pose,80).unwrap_or(0.),at(pose,84).unwrap_or(0.)];
+  let zelda=[at(pose,88).unwrap_or(0.),at(pose,92).unwrap_or(0.),at(pose,96).unwrap_or(0.)];
+  let current=[at(pose,32).unwrap_or(0.)-zelda[0]+mc[0],
+               at(pose,36).unwrap_or(0.)-zelda[1]+mc[1],
+               at(pose,40).unwrap_or(0.)-zelda[2]+mc[2]];
   let mut dirty=BTreeSet::new();
-  if !tris.is_empty(){
+  let mut accepted=0usize;
+  let mut newest_seq=self.seq;
+  let mut total_new_tris=0usize;
+  for guest in samples.chunks_exact(SIZE){
+   let seq=u32::from_le_bytes(guest[0..4].try_into().unwrap());
+   if seq==0 || seq&1==1 || (accepted==0 && seq==self.seq){continue}
+   let Some(tris)=triangles(guest,pose)else{continue};
+   newest_seq=seq;
+   accepted+=1;
+   total_new_tris+=tris.len();
+   if tris.is_empty(){continue}
+   let center=[at(guest,8).unwrap()-zelda[0]+mc[0],
+               at(guest,12).unwrap()-zelda[1]+mc[1],
+               at(guest,16).unwrap()-zelda[2]+mc[2]];
    let key=cache_key(center);
-   // Duplicate partial tile publications merge into the latest data.
-   // Preserve a full known mesh rather than replacing it with fewer hits.
+   // Do not replace a fully sampled tile with an older partial patch.
    let replace=self.patches.get(&key).is_none_or(|old|tris.len()>=old.triangles.len());
    if replace{
-    let patch=Patch::new(seq,tris.clone());
+    let patch=Patch::new(seq,tris);
     if let Some(old)=self.patches.insert(key,patch){dirty.extend(old.regions());}
     dirty.extend(self.patches.get(&key).unwrap().regions());
    }
   }
+  if accepted==0{return 0}
   let expired:Vec<_>=self.patches.iter().filter_map(|(key,_)|{
    let x=(key.0 as f32)*CACHE_TILE;
    let z=(key.1 as f32)*CACHE_TILE;
@@ -281,19 +296,19 @@ impl TerrainRelay {
     // Force a full refresh on next successful packet rather than pretending
     // an unaccepted mesh is already installed.
     self.started=false;self.tri_packets.clear();self.voxel_packets.clear();
-    return false;
+    return 0;
    }
   }
-  self.seq=seq;self.started=true;
-  self.reports=self.reports.wrapping_add(1);
+  self.seq=newest_seq;self.started=true;
+  self.reports=self.reports.wrapping_add(accepted as u32);
   self.stats_updates+=messages.len() as u32;
   if self.reports==1 || self.reports%80==0 {
    let cached:usize=self.patches.values().map(|p|p.triangles.len()).sum();
-   println!("[TERRAIN] FINE 0.68m grid seq={} new_tris={} cached_tiles={} cached_tris={} dirty_regions={} dirty_solid_blocks={} sent_packets={} (cached regions not rescanned)",
-    seq,tris.len(),self.patches.len(),cached,dirty.len(),solid_blocks,self.stats_updates);
+   println!("[TERRAIN] FINE 0.68m batch seq={} samples={} new_tris={} cached_tiles={} cached_tris={} dirty_regions={} dirty_solid_blocks={} sent_packets={} (regions merged once)",
+    newest_seq,accepted,total_new_tris,self.patches.len(),cached,dirty.len(),solid_blocks,self.stats_updates);
    self.stats_updates=0;
   }
-  true
+  accepted
  }
  pub fn clear(&mut self,map:&mut SharedMap){
   if self.started {let _=map.collision_write(&clear());}
