@@ -16,7 +16,7 @@ const COL_REGION:u32=2;
 const COL_TRIS:u32=3;
 
 #[derive(Clone,Copy,Debug,PartialEq,Eq,PartialOrd,Ord)]
-struct Region(i32,i32,i32);
+pub(crate) struct Region(pub(crate) i32,pub(crate) i32,pub(crate) i32);
 impl Region {
  fn from_xyz(x:f32,y:f32,z:f32)->Self{
    Self((x.floor() as i32).div_euclid(REGION),
@@ -40,10 +40,10 @@ fn packet(kind:u32,payload:&[u8])->Vec<u8>{
  b.extend_from_slice(&kind.to_le_bytes());b.extend_from_slice(&(payload.len() as u32).to_le_bytes());
  b.extend_from_slice(payload);b.resize((b.len()+7)&!7,0);b
 }
-fn clear()->Vec<u8>{packet(COL_CLEAR,&1u32.to_le_bytes())}
+pub(crate) fn clear()->Vec<u8>{packet(COL_CLEAR,&1u32.to_le_bytes())}
 
 #[derive(Clone,Copy,Debug)]
-struct Triangle{v:[[f32;3];3]}
+pub(crate) struct Triangle{pub(crate) v:[[f32;3];3]}
 impl Triangle{
  fn bounds(&self)->([f32;3],[f32;3]){
   let mut a=[f32::INFINITY;3];let mut b=[f32::NEG_INFINITY;3];
@@ -118,7 +118,7 @@ fn tri_regions(tris:&[Triangle])->BTreeMap<Region,Vec<Triangle>>{
  }
  out
 }
-fn tri_message(region:Region,tris:&[Triangle])->Vec<u8>{
+pub(crate) fn tri_message(region:Region,tris:&[Triangle])->Vec<u8>{
  let mut data=region.header(tris.len());
  for t in tris {for v in t.v {for f in v {data.extend_from_slice(&f.to_le_bytes());}}
   data.extend_from_slice(&TRI_TERRAIN.to_le_bytes());
@@ -129,7 +129,7 @@ fn tri_message(region:Region,tris:&[Triangle])->Vec<u8>{
 // SkyCraft expects COL_REGION blocks encoded as coordinates + reserved
 // + eight u64 8x8 bit-plane voxels (Y layers). The server simulates Steve
 // against these, independently of the client triangle pass.
-fn voxel_regions(tris:&[Triangle])->BTreeMap<Region,Vec<(i32,i32,i32,[u64;8])>>{
+pub(crate) fn voxel_regions(tris:&[Triangle])->BTreeMap<Region,Vec<(i32,i32,i32,[u64;8])>>{
  // Build sub-voxel Minecraft collision shapes from the real Havok triangles.
  // Only visit the block columns under each triangle, never the giant AABB
  // encompassing all cached samples (which caused lag on hills and cliffs).
@@ -165,7 +165,7 @@ fn voxel_regions(tris:&[Triangle])->BTreeMap<Region,Vec<(i32,i32,i32,[u64;8])>>{
   .map(|((x,y,z),bits)|(x,y,z,bits)).collect())).collect()
 }
 
-fn voxel_message(region:Region,blocks:&[(i32,i32,i32,[u64;8])])->Vec<u8>{
+pub(crate) fn voxel_message(region:Region,blocks:&[(i32,i32,i32,[u64;8])])->Vec<u8>{
  let mut data=region.header(blocks.len());
  for (x,y,z,bits) in blocks {
   for n in [*x,*y,*z,0] {data.extend_from_slice(&n.to_le_bytes());}

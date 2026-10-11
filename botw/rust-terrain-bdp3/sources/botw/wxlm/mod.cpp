@@ -93,6 +93,7 @@ struct alignas(16) Mailbox {
         volatile float center[3];
         volatile float heights[9];
     } terrain_ring[64];
+    volatile uint32_t static_terrain_active; // Host GDB +4080, suppress Havok sampler in static mode.
 };
 static_assert(offsetof(Mailbox, packet) == 40);
 static_assert(offsetof(Mailbox, acknowledged_seq) == 152);
@@ -108,6 +109,7 @@ static_assert(offsetof(Mailbox, terrain_seq) == 432, "legacy terrain ABI drift")
 static_assert(offsetof(Mailbox, terrain_ring_write) == 488, "v2 ring header ABI drift");
 static_assert(offsetof(Mailbox, terrain_ring) == 496, "v2 ring data ABI drift");
 static_assert(sizeof(Mailbox::TerrainGrid)==56, "terrain ring grid record must be 56 bytes");
+static_assert(offsetof(Mailbox, static_terrain_active)==4080, "static terrain host flag must follow ring");
 
 extern "C" {
 // Marker must remain in the actual guest .data of this wxlm module.
@@ -1048,7 +1050,7 @@ extern "C" __attribute__((used)) void BotwCraftPlayerTick() {
     const bool camera = updateCameraFromGame(p);
     // Opt-in terrain collision sampling: this does NOT warp Steve, alter
     // Link's actor controller, change the camera or manipulate input.
-    sampleHavokTerrain(p);
+    if (g_BotwCraftLiveMailbox.static_terrain_active==0) sampleHavokTerrain(p);
     // Link's renderer is not needed for first-person BotwCraft. Do NOT
     // couple visibility to camera-matrix hook timing: that hook may run after
     // the player tick or report a one-frame delay, leaving Link on screen.

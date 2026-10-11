@@ -30,6 +30,26 @@ if errorlevel 1 (
  exit /b 1
 )
 echo.
+echo.
+echo ==== COLLISIONS DIRECTES DE ZELDA (SANS RAYCAST) ====
+set "ROMFS=D:\Jeux\Emu\Jeux\botw_dump\romfs"
+if not exist "%ROMFS%\Physics\TeraMeshRigidBody\MainField" (
+  echo Dossier BOTW RomFS non trouve au chemin habituel.
+  set /p "ROMFS=Chemin complet du dossier romfs extrait (Entree = ignorer) : "
+)
+if exist "%ROMFS%\Physics\TeraMeshRigidBody\MainField" (
+ echo Conversion de tes collisions locales, uniquement la premiere fois ou si elles changent...
+ "%PY_EXE%" botw_collision_converter.py "%ROMFS%\Physics\TeraMeshRigidBody\MainField" --output "%~dp0terrain_cache"
+ if errorlevel 1 (
+   echo [AVERTISSEMENT] Conversion incomplete. Tu peux relancer INSTALLER_COMPLET plus tard.
+   echo Le mode raycast de secours reste disponible.
+ ) else (
+   echo [OK] Terrain de Zelda extrait et en cache local. Aucun fichier de jeu dans le ZIP.
+ )
+) else (
+ echo [AVERTISSEMENT] Terrain RomFS introuvable : seul le raycast de secours fonctionnera.
+)
+echo.
 echo [OK] Mod Minecraft, module Zelda et bridge Rust prepares.
 echo Lance START_BOTWCRAFT.bat pour jouer.
 pause

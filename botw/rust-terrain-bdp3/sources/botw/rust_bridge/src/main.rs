@@ -8,6 +8,8 @@ mod guest_gdb;
 mod telemetry;
 #[cfg(target_os="windows")]
 mod terrain;
+#[cfg(target_os="windows")]
+mod static_terrain;
 
 #[cfg(target_os="windows")]
 fn main(){
@@ -53,6 +55,9 @@ fn main(){
   let sender=Arc::clone(&state);
   thread::Builder::new().name("botwcraft-wxlm-transport".into())
     .spawn(move||guest_gdb::transport_loop(sender))?;
+  let direct=Arc::clone(&state);
+  thread::Builder::new().name("botwcraft-direct-terrain".into())
+    .spawn(move||static_terrain::run(direct))?;
   // Havok raycast samples now arrive on the native Zelda guest GDB transport.
   // No external .hght files, manifests, or second terrain worker.
   let ticker=Arc::clone(&state);

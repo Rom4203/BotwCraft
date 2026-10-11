@@ -2,8 +2,9 @@
 //! Never probes or writes speculative Win32 host-memory copies.
 use std::{fs,io::{self,Read,Write},net::{SocketAddr,TcpStream},
  path::Path,sync::{Arc,Mutex},thread,time::{Duration,Instant}};
-use crate::{engine::Engine,shared::DIRECT,terrain::TerrainRelay};
+use crate::{engine::Engine,shared::DIRECT,terrain::TerrainRelay,static_terrain::STATIC_ACTIVE};
 use serde_json::json;
+use std::sync::atomic::Ordering;
 const MAGIC:&[u8]=b"BOTWCRAFT_WXLM_BDP1_LIVE_20261010";
 const MARKER_BYTES:usize=40;
 const POSE_BYTES:usize=112;
@@ -211,6 +212,7 @@ pub fn transport_loop(state:Arc<Mutex<Engine>>){
    let mut latency_sum=0u128;
    let mut latency_count=0u64;
    let mut terrain=TerrainRelay::default();
+   let mut terrain_static_guest=false;
    let mut last_terrain=Instant::now()-Duration::from_secs(1);
    let mut terrain_ring_read=0u32;
    let mut terrain_ring_available=false;
@@ -285,12 +287,21 @@ pub fn transport_loop(state:Arc<Mutex<Engine>>){
        last_pose=None;
        println!("[RUST_LINK] Disarmed once. Read-only until active input.");
     }
+    // Static physical mesh bypass: stop spending Havok CPU on raycasts when
+    // the exact user-owned collision file is already present on disk.
+    let static_active=STATIC_ACTIVE.load(Ordering::Acquire);
+    if authenticated && static_active!=terrain_static_guest {
+      remote.write(addr+4080,&(if static_active{1u32}else{0u32}).to_le_bytes())?;
+      terrain_static_guest=static_active;
+      if static_active { ever_havok=false; }
+      println!("[TERRAIN] Guest Havok scan {} (direct BTRI mode)",if static_active{"suspended"}else{"resumed"});
+    }
     // V2 mailbox: 64-slot independent terrain mesh ring at guest +496.
     // No 56-byte tile can be overwritten before Rust has 64 newer tiles,
     // even when the emulator's GDB debugger pauses for an input refresh.
     // 10ms polling is deliberately bounded; never delay the BDP3 camera
     // with an unbounded while-loop or hundreds of Havok read requests.
-    if armed && authenticated && last_terrain.elapsed()>=Duration::from_millis(10){
+    if armed && authenticated && !static_active && last_terrain.elapsed()>=Duration::from_millis(10){
       terrain_disarmed_at=None;
       if !terrain_ring_checked {
         match remote.read(addr+488,8){
@@ -394,7 +405,7 @@ pub fn transport_loop(state:Arc<Mutex<Engine>>){
         last_havok_diagnostic=Instant::now();
       }
       last_terrain=Instant::now();
-    }else if !armed && ever_havok{
+    }else if !armed && ever_havok && !static_active{
       // Do not discard every real collider on one lost 1-FPS frame / BDP3
       // handshake. Preserve it for 3 seconds; still clear on disconnect.
       let since=terrain_disarmed_at.get_or_insert_with(Instant::now);
