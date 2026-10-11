@@ -632,10 +632,10 @@ static bool tNoHitWarned=false;
 static uint32_t tWaitTicks=0;
 static uint32_t tCompleted=0;
 static uint32_t tMissed=0;
-// Up to three in-flight Havok physics rays. Previous single-request 3x3
+// Up to nine independent Havok physics rays. Previous single-request 3x3
 // scans took ~6 seconds, leaving Steve falling before a grid was published.
 // Poll without waiting from the Zelda main/player callback.
-static constexpr unsigned kTerrainConcurrency=3;
+static constexpr unsigned kTerrainConcurrency=9;
 static void* tPending[9]={};
 static Vec3Raw tStarts[9]={};
 static Vec3Raw tEnds[9]={};
@@ -685,7 +685,7 @@ static void publishHavokGrid(){
         S::Log("[BOTW_NATIVE] TERRAIN_HAVOK_FIRST_GROUND_HIT");
     }
     ++tGridNumber;
-    // Up to three asynchronous requests at once, never hundreds per frame.
+    // Nine asynchronous requests per grid, never hundreds per frame.
     // Rate-limited diagnostic of sparse terrain samples.
     if(tGridNumber==1 && !tMask)
         S::Log("[BOTW_NATIVE] TERRAIN_GRID_NO_WALKABLE_GROUND");
@@ -736,7 +736,7 @@ static void sampleHavokTerrain(const Pose& pose) {
     if(tFinishedCount==9){
         publishHavokGrid();
         tGridActive=false;
-        tPauseTicks=8; // avoid flooding Havok scheduler and Ryujinx GDB
+        tPauseTicks=2; // brief yield after each asynchronous nine-ray grid
         return;
     }
     if(++tWaitTicks>=240u && !tStallWarned){

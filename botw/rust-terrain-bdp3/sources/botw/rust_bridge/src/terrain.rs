@@ -171,19 +171,19 @@ fn voxel_message(region:Region,blocks:&[(i32,i32,i32,[u64;8])])->Vec<u8>{
  packet(COL_REGION,&data)
 }
 
-// Keyed on the 4x4-block floor tile; a new Havok sample refreshes its
-// corresponding cached tile instead of deleting the ENTIRE previous mesh.
+// Cache on 1.25-block centers so moving within a 4-block tile never
+// overwrites the previous (much larger) 5.5x5.5-meter sampled mesh.
 // Empty raycasts cannot erase known ground, preventing temporary holes.
-const CACHE_TILE:f32=4.0;
-const CACHE_RADIUS:f32=28.0;
-const CACHE_MAX:usize=96;
+const CACHE_TILE:f32=1.25;
+const CACHE_RADIUS:f32=36.0;
+const CACHE_MAX:usize=64;
 fn cache_key(center:[f32;3])->(i32,i32){
  ((center[0]/CACHE_TILE).floor() as i32,(center[2]/CACHE_TILE).floor() as i32)
 }
 #[derive(Default)]
 pub struct TerrainRelay {
  seq:u32,
- patches:BTreeMap<(i32,i32),Vec<Triangle>>,
+ patches:BTreeMap<(i32,i32),(u32,Vec<Triangle>)>,
  tri_packets:BTreeMap<Region,Vec<u8>>,
  voxel_packets:BTreeMap<Region,Vec<u8>>,
  started:bool,
@@ -204,18 +204,17 @@ impl TerrainRelay {
   let current=[at(pose,32).unwrap()-zelda[0]+mc[0],
                at(pose,36).unwrap()-zelda[1]+mc[1],
                at(pose,40).unwrap()-zelda[2]+mc[2]];
-  if !tris.is_empty(){self.patches.insert(cache_key(center),tris.clone());}
+  if !tris.is_empty(){self.patches.insert(cache_key(center),(seq,tris.clone()));}
   self.patches.retain(|(kx,kz),_| {
    let x=(*kx as f32+0.5)*CACHE_TILE;
    let z=(*kz as f32+0.5)*CACHE_TILE;
    (x-current[0]).abs()<=CACHE_RADIUS && (z-current[2]).abs()<=CACHE_RADIUS
   });
   while self.patches.len()>CACHE_MAX {
-   // Safety cap. Cache is spatially bounded already; remove the oldest
-   // key only if the player stands on dense meshes for a long time.
-   let key=*self.patches.keys().next().unwrap();self.patches.remove(&key);
+   // Evict the oldest patch, not the lexicographically smallest coordinate.
+   let key=*self.patches.iter().min_by_key(|(_, (updated,_))|*updated).unwrap().0;self.patches.remove(&key);
   }
-  let mesh:Vec<Triangle>=self.patches.values().flat_map(|v|v.iter().copied()).collect();
+  let mesh:Vec<Triangle>=self.patches.values().flat_map(|(_,v)|v.iter().copied()).collect();
   let t=tri_regions(&mesh);let vox=voxel_regions(&mesh);
   let new_t:BTreeMap<Region,Vec<u8>>=t.into_iter().map(|(r,v)|(r,tri_message(r,&v))).collect();
   let new_v:BTreeMap<Region,Vec<u8>>=vox.iter().map(|(r,v)|(*r,voxel_message(*r,v))).collect();
@@ -269,4 +268,22 @@ mod tests{
  #[test]fn sample_mask_rejects_unknown_bits_and_cliff_bridge(){let(mut g,p)=sample();g[4..8].copy_from_slice(&0x8000u32.to_le_bytes());assert!(triangles(&g,&p).is_none());g[4..8].copy_from_slice(&511u32.to_le_bytes());g[20..24].copy_from_slice(&20f32.to_le_bytes());assert!(triangles(&g,&p).unwrap().len()<8)}
  #[test]fn guest_center_is_checked_against_bdp3_pose(){let(mut g,p)=sample();g[8..12].copy_from_slice(&400f32.to_le_bytes());assert!(triangles(&g,&p).is_none());}
  #[test]fn packet_header_is_skymod_v11_compatible(){let(guest,p)=sample();let t=triangles(&guest,&p).unwrap();let r=Region(0,0,0);let b=tri_message(r,&t);assert_eq!(u32::from_le_bytes(b[0..4].try_into().unwrap()),3);assert_eq!(u32::from_le_bytes(b[8+28..8+32].try_into().unwrap()),8);assert_eq!(u32::from_le_bytes(b[4..8].try_into().unwrap()),(32+8*40) as u32);}
+}
+
+#[cfg(test)]
+mod coverage_tests {
+ use super::*;
+ #[test]
+ fn adjacent_samples_do_not_replace_full_terrain_patch() {
+  let a=cache_key([3.0,0.0,8.0]);
+  let b=cache_key([4.5,0.0,8.0]);
+  assert_ne!(a,b,"each >1.25m movement must retain previous 5.5m sampled footprint");
+ }
+ #[test]
+ fn steep_cliff_does_not_generate_fabricated_floor_between_banks(){
+  let left=Triangle{v:[[0.,0.,0.],[0.,0.,2.],[1.,0.,0.]]};
+  let right=Triangle{v:[[3.,10.,0.],[3.,10.,2.],[4.,10.,0.]]};
+  let solid=voxel_regions(&[left,right]);
+  assert!(!solid.values().flat_map(|b|b.iter()).any(|(x,_,_,_)| *x==2));
+ }
 }

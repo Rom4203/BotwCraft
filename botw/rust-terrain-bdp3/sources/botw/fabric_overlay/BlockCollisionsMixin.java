@@ -13,6 +13,8 @@ import net.minecraft.world.phys.shapes.EntityCollisionContext;
 import net.minecraft.world.phys.shapes.Shapes;
 import net.minecraft.world.phys.shapes.VoxelShape;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Shadow;
+import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.injection.At;
 
 /**
@@ -22,6 +24,22 @@ import org.spongepowered.asm.mixin.injection.At;
  */
 @Mixin(BlockCollisions.class)
 public abstract class BlockCollisionsMixin {
+    @Shadow @Final private BlockPos.MutableBlockPos pos;
+    @Shadow @Final private CollisionContext context;
+
+    // Minecraft skips air BEFORE asking for its collision shape; BOTW
+    // virtual blocks occupy air, so let known SkyCraft shapes past this gate.
+    @WrapOperation(method="computeNext", at=@At(value="INVOKE",
+        target="Lnet/minecraft/world/level/block/state/BlockState;isAir()Z"), require=0)
+    private boolean botwcraft$virtualAirHasShape(BlockState state, Operation<Boolean> original) {
+        if (context instanceof EntityCollisionContext ec
+            && BotwCollisionGate.replacesVanilla(ec.getEntity())
+            && SkyCollision.shapeAt(pos) != null) {
+            return false;
+        }
+        return original.call(state);
+    }
+
     @WrapOperation(method="computeNext", at=@At(value="INVOKE", target=
         "Lnet/minecraft/world/phys/shapes/CollisionContext;getCollisionShape(Lnet/minecraft/world/level/block/state/BlockState;Lnet/minecraft/world/level/CollisionGetter;Lnet/minecraft/core/BlockPos;)Lnet/minecraft/world/phys/shapes/VoxelShape;"))
     private VoxelShape botwcraft$terrainOnly(
