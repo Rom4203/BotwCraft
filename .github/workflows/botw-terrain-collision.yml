@@ -1,0 +1,18 @@
+name: BotwCraft collision experiment checks
+on:
+  push:
+    branches: [botw-terrain-collision-experimental]
+    paths:
+      - 'botw/experimental/terrain/**'
+      - '.github/workflows/botw-terrain-collision.yml'
+  pull_request:
+    paths:
+      - 'botw/experimental/terrain/**'
+      - '.github/workflows/botw-terrain-collision.yml'
+jobs:
+  python-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unit tests for offline collision packet conversion
+        run: python3 -m unittest discover -s botw/experimental/terrain -p 'test_collision_stream.py' -v
