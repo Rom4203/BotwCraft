@@ -4,13 +4,13 @@ import dev.skycraft.SkyCraft;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.minecraft.client.Minecraft;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import net.minecraft.world.entity.ai.attributes.AttributeModifier;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 
 /** Only the local host's authoritative MC player gets a temporary +6% walk boost. */
 public final class BotwCraftWalkSpeed implements ClientModInitializer {
-    private static final ResourceLocation BOOST_ID = ResourceLocation.fromNamespaceAndPath("skycraft", "botw_walk_6_percent");
+    private static final Identifier BOOST_ID = Identifier.fromNamespaceAndPath("skycraft", "botw_walk_6_percent");
     private static final AttributeModifier BOOST = new AttributeModifier(BOOST_ID, 0.06, AttributeModifier.Operation.ADD_MULTIPLIED_BASE);
     private int ticks;
 
