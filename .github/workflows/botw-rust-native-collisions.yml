@@ -1,4 +1,4 @@
-name: BOTW BDP3 Rust terrain bridge
+name: BOTW Havok SkyCraft collisions - Rust and native guest
 on:
   push:
     branches: [botw-rust-native-collisions]
@@ -9,17 +9,36 @@ on:
 jobs:
   windows-rust:
     runs-on: windows-latest
+    timeout-minutes: 25
     defaults:
       run:
         working-directory: botw/rust-terrain-bdp3/sources/botw/rust_bridge
     steps:
       - uses: actions/checkout@v4
-      - name: Rust native collision unit tests
+      - name: Rust tests of native Havok collision sample and v11 encoding
         run: cargo test --verbose
-      - name: Compile the native Windows BDP3 bridge
+      - name: Compile Windows Rust bridge
         run: cargo build --release --verbose
       - uses: actions/upload-artifact@v4
         with:
-          name: botwcraft-rust-bridge-with-terrain
+          name: botwcraft-havok-windows-bridge
           path: botw/rust-terrain-bdp3/sources/botw/rust_bridge/target/release/botwcraft-rust-bridge.exe
+          if-no-files-found: error
+  switch-havok:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    container: devkitpro/devkita64:latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: git clone --depth=1 https://github.com/BladesawStudios/WiiXLaunch.git vendor/WiiXLaunch
+      - name: Build real Switch Havok raycast sampler
+        run: |
+          python3 vendor/WiiXLaunch/sdk/scripts/build_mod.py --source botw/rust-terrain-bdp3/sources/botw/wxlm --target switch --wiixlaunch vendor/WiiXLaunch/sdk --out build-native
+          test -s build-native/switch-mods/bwc_pose.wxlm
+      - uses: actions/upload-artifact@v4
+        with:
+          name: botwcraft-havok-wxlm
+          path: |
+            build-native/switch-mods/bwc_pose.wxlm
+            botw/rust-terrain-bdp3/sources/botw/wxlm/mod.cpp
           if-no-files-found: error

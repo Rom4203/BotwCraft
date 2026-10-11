@@ -2,7 +2,7 @@
 //! Never probes or writes speculative Win32 host-memory copies.
 use std::{fs,io::{self,Read,Write},net::{SocketAddr,TcpStream},
  path::Path,sync::{Arc,Mutex},thread,time::{Duration,Instant}};
-use crate::{engine::Engine,shared::DIRECT};
+use crate::{engine::Engine,shared::DIRECT,terrain::TerrainRelay};
 use serde_json::json;
 const MAGIC:&[u8]=b"BOTWCRAFT_WXLM_BDP1_LIVE_20261010";
 const MARKER_BYTES:usize=40;
@@ -195,6 +195,10 @@ pub fn transport_loop(state:Arc<Mutex<Engine>>){
    let mut last_pose:Option<[u8;POSE_BYTES]>=None;
    let mut latency_sum=0u128;
    let mut latency_count=0u64;
+   let mut terrain=TerrainRelay::default();
+   let mut last_terrain=Instant::now()-Duration::from_secs(1);
+   let mut ever_havok=false;
+   let mut last_havok_warning=Instant::now()-Duration::from_secs(10);
    loop{
     // Player XYZ is sampled every 100ms, NOT at every transmitted Minecraft
     // frame. That avoids a 4th GDB roundtrip on the critical camera path.
@@ -253,6 +257,29 @@ pub fn transport_loop(state:Arc<Mutex<Engine>>){
        authenticated=false;
        last_pose=None;
        println!("[RUST_LINK] Disarmed once. Read-only until active input.");
+    }
+    // One *read-only* GDB request at most every 250 ms. Native NX150
+    // WiiXLaunch samples actual Havok surfaces on the player callback.
+    // Recover gracefully if the module lacks this mailbox extension:
+    // DO NOT tear down the 120 Hz camera/input link on a raycast error.
+    if armed && authenticated && last_terrain.elapsed()>=Duration::from_millis(250){
+      match remote.read(addr+432,56){
+        Ok(samples)=>{
+          let mut engine=state.lock().map_err(|_|other("bridge mutex poisoned"))?;
+          if terrain.ingest(&samples,&pose,&mut engine.mem){ever_havok=true}
+        }
+        Err(e)=>{
+          if last_havok_warning.elapsed()>=Duration::from_secs(5){
+            eprintln!("[TERRAIN] Havok mailbox unavailable ({e}); gameplay link kept alive");
+            last_havok_warning=Instant::now();
+          }
+        }
+      }
+      last_terrain=Instant::now();
+    }else if !armed && ever_havok{
+      let mut engine=state.lock().map_err(|_|other("bridge mutex poisoned"))?;
+      terrain.clear(&mut engine.mem);
+      ever_havok=false;
     }
     if last_report.elapsed()>=Duration::from_secs(5){
       let status=remote.read(addr+196,8).unwrap_or_default();

@@ -53,7 +53,8 @@ fn main(){
   let sender=Arc::clone(&state);
   thread::Builder::new().name("botwcraft-wxlm-transport".into())
     .spawn(move||guest_gdb::transport_loop(sender))?;
-  terrain::start(Arc::clone(&state));
+  // Havok raycast samples now arrive on the native Zelda guest GDB transport.
+  // No external .hght files, manifests, or second terrain worker.
   let ticker=Arc::clone(&state);
   thread::Builder::new().name("botwcraft-bdp1".into()).spawn(move||{
    loop{

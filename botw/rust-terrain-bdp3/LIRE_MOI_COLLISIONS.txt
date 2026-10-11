@@ -1,0 +1,46 @@
+BOTWCRAFT — COLLISIONS SKYCRAFT / HAVOK (11 OCTOBRE 2026)
+========================================================
+
+OBJECTIF : c'est Steve qui marche sur les collisions d'Hyrule.
+Aucun deplacement de Link par manette, aucun TP permanent de Steve.
+Un seul mod Fabric : skycraft-0.1.2.jar.
+
+Cette version abandonne ENTIEREMENT les fichiers .hght et terrain.json.
+
+CHAINE REELLE
+  Module WiiXLaunch dans Zelda (Havok) : 9 raycasts sol autour de Link
+      -> mailbox du jeu Ryujinx (offset 432)
+      -> Ryujinx GDB local (lecture seulement, 4 fois par seconde)
+      -> bridge Rust (transforme les points dans le repere Minecraft)
+      -> memoire partagee SkyCraft v11 : COL_TRIS + COL_REGION
+      -> SkyCollision du mod Fabric
+      -> SkyCollider pour mouvement fluide / voxel pour serveur integre.
+
+INSTALLATION
+1. Fermer Minecraft ET Ryujinx.
+2. Copier le dossier BotwCraft complet dans un dossier facilement accessible,
+   de preference a cote de l'ancien, sans ecraser l'ancien.
+3. Lancer INSTALLER_COMPLET.bat. Le script reinstalle egalement bwc_pose.wxlm
+   dans le bon profil Ryujinx et proposera le chemin des mods Minecraft.
+4. Si Prism n'a pas ete selectionne pendant l'installation, executer
+   INSTALLER_MINECRAFT_RAPIDE.bat (profil BotwCraftNative detecte automatiquement).
+5. Lancer START_BOTWCRAFT.bat, Zelda BOTW 1.5.0, puis Minecraft.
+6. Dans Minecraft : /botwcraft connect puis /botwcraft inputs on.
+
+DIAGNOSTIC
+Le fichier logs/botwcraft.log doit afficher :
+ [BOTW_NATIVE] TERRAIN_HAVOK_REQUEST_SYMBOLS_READY
+ [BOTW_NATIVE] TERRAIN_HAVOK_FIRST_GROUND_HIT
+ [TERRAIN] Havok surface seq=... triangles=... solid_blocks=...
+
+Sans ces trois preuves, les collisions ne sont PAS actives.
+La compilation GitHub valide les sources mais NE valide PAS les appels Havok
+sur ton Ryujinx. Sauvegarde tes mondes et ta sauvegarde Zelda avant test.
+
+LIMITATIONS
+- Echantillonnage 3x3 du sol proche de Link (portee 2,75 blocs de chaque cote).
+- Ce n'est pas encore un maillage Havok exhaustif des murs, grottes, objets.
+- L'extension native Havok peut ne pas fonctionner sur ta version de Zelda,
+  ou faire planter Ryujinx; retour a l'ancien module possible en
+  reinstallant le ZIP BDP3 du 10 octobre.
+- Il faut tester en monde Minecraft de test avant d'utiliser une sauvegarde.
