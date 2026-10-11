@@ -18,8 +18,9 @@ COMMENT CA MARCHE
 6. Si la liaison, la pose ou le terrain est absent: physique Minecraft normale.
 
 IMPORTANT : CECI N'EST PAS ENCORE UN SYSTEME COMPLET TESTE EN JEU.
-- L'EXE RUST present dans CE ZIP est encore l'original BDP3, NON RECOMPILE.
-  Compiler sous Windows avec BUILD_RUST_BRIDGE.bat pour y integrer terrain.rs.
+- Le bridge Rust Windows (EXE) fourni a ete recompile par GitHub Actions ;
+  les tests unitaires Rust et le build Windows ont reussi.
+  BUILD_RUST_BRIDGE.bat permet de le recompiler toi-meme si tu veux.
 - Aucun fichier Nintendo .hght n'est distribue. Ils doivent provenir de ta
   propre extraction du jeu. Les donnees .hght ne couvrent que les hauteurs
   du terrain MainField. Les obstacles Havok, grottes, edifices et collisions

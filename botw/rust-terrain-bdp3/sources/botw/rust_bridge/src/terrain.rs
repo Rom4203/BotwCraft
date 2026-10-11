@@ -7,7 +7,7 @@
 //!
 //! This handles MainField terrain only: not Havok hksc/hktmrb walls, dungeons,
 //! platforms, moving props, etc. It never invents geometry when data is absent.
-use std::{collections::{BTreeMap,BTreeSet}, fs, path::{Path,PathBuf}, sync::{Arc,Mutex},thread,time::Duration};
+use std::{collections::BTreeSet, fs, path::{Path,PathBuf}, sync::{Arc,Mutex},thread,time::Duration};
 use serde_json::Value;
 use crate::{engine::Engine,shared::SharedMap};
 
@@ -16,7 +16,7 @@ const MAX_TILES:usize=4096;
 const MAX_TRIANGLES:usize=1024;
 const GRID:usize=256;
 const MAGIC_FILE_SIZE:usize=GRID*GRID*2;
-const REGION_RANGE:i32=2; // five 8-block regions in X and Z
+const REGION_RANGE:i32=1; // three 8-block regions in X and Z; limit Java geometry rebuilds
 const COL_CLEAR:u32=1;
 const COL_REGION:u32=2;
 const COL_TRIS:u32=3;

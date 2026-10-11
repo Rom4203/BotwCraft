@@ -15,6 +15,7 @@ import dev.skycraft.world.SkyTri;
 public final class BotwCollisionGate {
     private static boolean consumerStarted;
     private static volatile boolean ready;
+    private static volatile long lastReadyCheck;
     private static volatile int generation = -1;
     private static volatile boolean disabledAfterRestart;
 
@@ -55,7 +56,11 @@ public final class BotwCollisionGate {
             ready = false;
             return false;
         }
-        if (!ready) ready = SkyCollision.triangleCount() > 0;
+        long now = System.nanoTime();
+        if (now - lastReadyCheck > 50_000_000L || !ready) {
+            ready = SkyCollision.triangleCount() > 0;
+            lastReadyCheck = now;
+        }
         return ready;
     }
 
@@ -63,7 +68,7 @@ public final class BotwCollisionGate {
      * triangles have arrived. Spectators/physics-free entities are untouched.
      */
     public static boolean replacesVanilla(Entity entity) {
-        if (!(entity instanceof Player) || entity.noPhysics || !linked()) return false;
+        if (!(entity instanceof Player player) || player.isSpectator() || entity.noPhysics || !linked()) return false;
         Probe p = probe.get();
         long now = System.nanoTime();
         if (p.entity != entity || now - p.timestamp > 25_000_000L) {
