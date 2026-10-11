@@ -12,7 +12,7 @@
   "environment": "client",
   "entrypoints": {
     "main": ["dev.skycraft.SkyCraft"],
-    "client": ["dev.skycraft.client.SkyCraftClient", "dev.skycraft.client.CollisionWireframe"]
+    "client": ["dev.skycraft.client.SkyCraftClient", "dev.skycraft.client.CollisionWireframe", "dev.skycraft.client.BotwCraftWalkSpeed"]
   },
   "mixins": [
     "skycraft.mixins.json",

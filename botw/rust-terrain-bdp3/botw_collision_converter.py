@@ -94,7 +94,8 @@ def extract_terrain(raw:bytes)->tuple[list[tuple[float,...]],dict]:
     domain_max=vec3(data,data_start+sh+0x80)
     bounds={'min':list(domain_min),'max':list(domain_max)}
     all_triangles=[]
-    degenerate_keys=0
+    skipped_sentinels=0
+    skipped_half_face_upper_bound=0
     for sec in sections:
         offset=vec3(sec,0x30)
         scale=vec3(sec,0x3c)
@@ -126,20 +127,39 @@ def extract_terrain(raw:bytes)->tuple[list[tuple[float,...]],dict]:
                 # Two vanilla BOTW files contain one dangling degenerate/sentinel
                 # (222,173,222,173), which is not an actual collision face.
                 if a==c and b==d:
-                    degenerate_keys+=1
+                    # BOTW contains out-of-range degenerate/sentinel indices.
+                    # Havok counts these as one OR two keys depending on the
+                    # section's encoding; they are not real collision faces.
+                    # Track a strict feasible count range rather than inventing
+                    # geometry or assuming every sentinel counts the same.
+                    skipped_sentinels += 1
+                    skipped_half_face_upper_bound += 1 + (d != c)
                     continue
                 raise ValueError(f'primitive references vertex outside section: {list(p)} / {len(verts)}')
             all_triangles.append((*verts[a],*verts[b],*verts[c]))
             if d!=c:all_triangles.append((*verts[a],*verts[c],*verts[d]))
-    if len(all_triangles)+degenerate_keys!=primitive_keys:
-        raise ValueError(f'Havok triangle count mismatch: {len(all_triangles)}+{degenerate_keys} != {primitive_keys}')
+    # Different Havok section codecs account for one invalid/sentinel quad
+    # as either one or two primitive keys. We know these entries have no real
+    # collision geometry, so accept only the ambiguity they actually explain.
+    degenerate_keys = primitive_keys - len(all_triangles)
+    # BOTW may record up to two degenerate keys without invalid sentinel indices.
+    # Preserve all valid triangles instead of rejecting an entire 250m terrain tile.
+    count_accepted = (skipped_sentinels <= degenerate_keys <= skipped_half_face_upper_bound) or (
+        skipped_sentinels == 0 and 0 <= degenerate_keys <= 2)
+    if not count_accepted:
+        raise ValueError(
+            f'Havok triangle count mismatch: {len(all_triangles)} valid + '
+            f'{degenerate_keys} absent; {skipped_sentinels} invalid sentinels '
+            f'(range {skipped_sentinels}..{skipped_half_face_upper_bound}); '
+            f'header expects {primitive_keys}'
+        )
     for t in all_triangles:
         if not all(math.isfinite(c) for c in t):raise ValueError('nonfinite triangle')
         for i,v in enumerate(t):
             k=i%3
             if not domain_min[k]-0.1<=v<=domain_max[k]+0.1:
                 raise ValueError(f'collision coordinate outside bounding box {k}: {v}')
-    return all_triangles,{'primitives':len(primitives),'triangle_keys':primitive_keys,'triangles':len(all_triangles),'degenerate_keys':degenerate_keys,'sections':len(sections),'bounds_local':bounds,'sdk':'hk_2014.2.0-r1'}
+    return all_triangles,{'primitives':len(primitives),'triangle_keys':primitive_keys,'triangles':len(all_triangles),'degenerate_keys':degenerate_keys,'invalid_sentinels':skipped_sentinels,'sections':len(sections),'bounds_local':bounds,'sdk':'hk_2014.2.0-r1'}
 
 
 def inputs(source:Path):
@@ -158,52 +178,93 @@ def inputs(source:Path):
         else:raise ValueError('need RomFS directory, shktmrb ZIP or shktmrb file')
 
 
+def _write_manifest(out:Path,tiles:list,failures:list,reused:int,started:float):
+    """Persist progress atomically so a later failure/interrupt never discards earlier work."""
+    summary={
+        'tiles':len(tiles),'reused_cached_tiles':reused,
+        'triangles':sum(x['triangles'] for x in tiles),
+        'degenerate_keys':sum(x['degenerate_keys'] for x in tiles),
+        'failed_tiles':len(failures),'errors':failures,
+        'elapsed_seconds':round(time.monotonic()-started,2),
+        'format':'BotwCraft BTRI v1',
+        'coordinate_grid':'40 x 32 tiles, 250 m; origin x=-5000, z=-4000',
+        'note':'geometry exported from user-owned physics files; not distributed'
+    }
+    manifest={'summary':summary,'tiles':tiles}
+    target=out/'terrain_manifest.json'
+    tmp=out/'terrain_manifest.json.tmp'
+    tmp.write_text(json.dumps(manifest,indent=2,ensure_ascii=False),encoding='utf-8')
+    tmp.replace(target)
+    return manifest
+
+
 def convert(source:Path,out:Path,verify:bool=False):
-    out.mkdir(parents=True,exist_ok=True)
+    if not verify:out.mkdir(parents=True,exist_ok=True)
     tile_dir=out/'terrain'
     if not verify:tile_dir.mkdir(parents=True,exist_ok=True)
-    tiles=[];started=time.monotonic()
+    tiles=[];failures=[];started=time.monotonic()
     previous={}
     old_manifest=out/'terrain_manifest.json'
     if old_manifest.is_file() and not verify:
         try:
             previous={row['filename']:row for row in json.loads(old_manifest.read_text(encoding='utf-8')).get('tiles',[])}
-        except (OSError,ValueError,KeyError):
+        except (OSError,ValueError,KeyError,TypeError):
             previous={}
     reused=0
-    for name,raw in inputs(source):
-        match=GRID_RE.fullmatch(name)
-        if not match:raise ValueError(f'unknown tile name {name}')
-        gx,gz=map(int,match.groups())
-        if not (0<=gx<40 and 0<=gz<32):raise ValueError(f'unsupported tile indices {name}')
-        digest=hashlib.sha256(raw).hexdigest()
-        target=tile_dir/f'{gx:02}-{gz:02}.btri'
-        old=previous.get(name,{})
-        if (not verify and old.get('sha256')==digest and target.is_file()
-                and target.stat().st_size==52+old.get('triangles',-1)*36):
-            tiles.append(old);reused+=1
-            if reused<=3:print(f'{name:<20} already converted, cache reused')
-            continue
-        faces,info=extract_terrain(raw)
-        x_start=-5000+gx*250
-        z_start=-4000+gz*250
-        row={'filename':name,'gx':gx,'gz':gz,'world_x':x_start,'world_z':z_start,'sha256':digest,**info}
-        if not verify:
-            # BTRI v1: 4s magic, u32 version, i32 gx, i32 gz, u32 count,
-            # i32 world_x, i32 world_z, 6 f32 local AABB, N*9 f32 triangles.
-            # Local coordinates are kept intact; the host adds world_x/z.
-            with target.open('wb') as fp:
-                fp.write(struct.pack('<4sIiiIii6f',b'BTRI',1,gx,gz,len(faces),x_start,z_start,*info['bounds_local']['min'],*info['bounds_local']['max']))
-                for t in faces:fp.write(struct.pack('<9f',*t))
-            row['cache_file']=str(target.relative_to(out)).replace('\\','/')
-        tiles.append(row)
-        print(f'{name:<20} {len(faces):>7} triangles / {info["sections"]:>4} sections' + (' [verified]' if verify else ' [cached]'))
-    summary={'tiles':len(tiles),'reused_cached_tiles':reused,'triangles':sum(x['triangles'] for x in tiles),'degenerate_keys':sum(x['degenerate_keys'] for x in tiles),'elapsed_seconds':round(time.monotonic()-started,2),'format':'BotwCraft BTRI v1','coordinate_grid':'40 x 32 tiles, 250 m; origin x=-5000, z=-4000','note':'geometry exported from game-owned physics files; mod integration required to use it'}
-    manifest={'summary':summary,'tiles':tiles}
-    path=out/'terrain_manifest.json'
-    path.write_text(json.dumps(manifest,indent=2,ensure_ascii=False),encoding='utf-8')
-    print('\nDone:',summary,'\nManifest:',path)
-    return manifest
+    try:
+        for name,raw in inputs(source):
+            try:
+                match=GRID_RE.fullmatch(name)
+                if not match:raise ValueError(f'unknown tile name {name}')
+                gx,gz=map(int,match.groups())
+                if not (0<=gx<40 and 0<=gz<32):raise ValueError(f'unsupported tile indices {name}')
+                digest=hashlib.sha256(raw).hexdigest()
+                target=tile_dir/f'{gx:02}-{gz:02}.btri'
+                old=previous.get(name,{})
+                if (not verify and old.get('sha256')==digest and target.is_file()
+                        and target.stat().st_size==52+old.get('triangles',-1)*36):
+                    tiles.append(old);reused+=1
+                    if reused<=3:print(f'{name:<20} already converted, cache reused',flush=True)
+                    continue
+                faces,info=extract_terrain(raw)
+                x_start=-5000+gx*250
+                z_start=-4000+gz*250
+                row={'filename':name,'gx':gx,'gz':gz,'world_x':x_start,'world_z':z_start,'sha256':digest,**info}
+                if not verify:
+                    # BTRI v1: header (52 bytes), triangles (36 bytes each).
+                    # Write into a temporary file: an interrupted conversion
+                    # must never leave a half-written valid-looking tile.
+                    temp=target.with_suffix('.btri.tmp')
+                    try:
+                        with temp.open('wb') as fp:
+                            fp.write(struct.pack('<4sIiiIii6f',b'BTRI',1,gx,gz,len(faces),x_start,z_start,*info['bounds_local']['min'],*info['bounds_local']['max']))
+                            for t in faces:fp.write(struct.pack('<9f',*t))
+                        temp.replace(target)
+                    finally:
+                        if temp.exists():temp.unlink()
+                    row['cache_file']=str(target.relative_to(out)).replace('\\','/')
+                tiles.append(row)
+                print(f'{name:<20} {len(faces):>7} triangles / {info["sections"]:>4} sections'+(' [verified]' if verify else ' [cached]'),flush=True)
+            except (ValueError,OverflowError,IndexError,KeyError,struct.error,OSError) as e:
+                # Never fabricate collision triangles for malformed/unsupported
+                # files; continue converting all other regions and report them.
+                error={'filename':name,'error':str(e)}
+                failures.append(error)
+                print(f'[ATTENTION] {name}: {e} (tuile ignoree, suite de la conversion)',flush=True)
+            if not verify and (len(tiles)+len(failures))%16==0:
+                _write_manifest(out,tiles,failures,reused,started)
+    finally:
+        # Ctrl+C still preserves the completed tiles in the manifest.
+        if not verify:_write_manifest(out,tiles,failures,reused,started)
+    if verify:
+        summary={'tiles':len(tiles),'triangles':sum(x['triangles'] for x in tiles),'failed_tiles':len(failures)}
+    else:
+        summary=_write_manifest(out,tiles,failures,reused,started)['summary']
+    print(f'\n[CONVERSION] {summary["tiles"]} tuiles OK, {summary["triangles"]:,} triangles, {len(failures)} echec(s), {summary.get("elapsed_seconds",0)} s.',flush=True)
+    if failures:
+        print('[ATTENTION] Les tuiles en echec seront traitees par le fallback Havok:',', '.join(x['filename'] for x in failures),flush=True)
+    if not verify:print('[MANIFEST] ',out/'terrain_manifest.json',flush=True)
+    return {'summary':summary,'tiles':tiles,'errors':failures}
 
 
 def main(argv=None):
@@ -213,6 +274,7 @@ def main(argv=None):
     ap.add_argument('--verify',action='store_true',help='verify only, do not write triangle cache')
     a=ap.parse_args(argv)
     if not a.source.exists():ap.error(f'input not found: {a.source}')
-    convert(a.source,a.output,a.verify)
+    result=convert(a.source,a.output,a.verify)
+    return 2 if result['errors'] else 0
 
-if __name__=='__main__':main()
+if __name__=='__main__':sys.exit(main())

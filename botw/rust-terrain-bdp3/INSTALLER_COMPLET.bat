@@ -50,6 +50,15 @@ if exist "%ROMFS%\Physics\TeraMeshRigidBody\MainField" (
  echo [AVERTISSEMENT] Terrain RomFS introuvable : seul le raycast de secours fonctionnera.
 )
 echo.
+echo ==== COLLISIONS DE DECORS ZELDA (arbres, batiments, rochers) ====
+if exist "%ROMFS%\Physics\StaticCompound\MainField" (
+ echo Conversion des formes statiques, leurs rotations et positions ; cache reutilisable...
+ "%PY_EXE%" botw_decor_converter.py "%ROMFS%\Physics\StaticCompound\MainField" --output "%~dp0terrain_cache"
+ if errorlevel 1 echo [AVERTISSEMENT] Cache des decors incomplet, relief deja conserve.
+) else (
+ echo [AVERTISSEMENT] StaticCompound/MainField introuvable. Relief seul disponible.
+)
+echo.
 echo [OK] Mod Minecraft, module Zelda et bridge Rust prepares.
 echo Lance START_BOTWCRAFT.bat pour jouer.
 pause

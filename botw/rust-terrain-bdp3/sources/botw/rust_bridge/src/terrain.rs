@@ -136,6 +136,46 @@ pub(crate) fn voxel_regions(tris:&[Triangle])->BTreeMap<Region,Vec<(i32,i32,i32,
  let mut result:BTreeMap<Region,BTreeMap<(i32,i32,i32),[u64;8]>>=BTreeMap::new();
  for tri in tris {
   let (low,high)=tri.bounds();
+  // Vertical wall/trunk physics: old heightfield path handled only floor surfaces.
+  let [a,b,c]=tri.v;
+  let edge1=[b[0]-a[0],b[1]-a[1],b[2]-a[2]];
+  let edge2=[c[0]-a[0],c[1]-a[1],c[2]-a[2]];
+  let n=[edge1[1]*edge2[2]-edge1[2]*edge2[1],edge1[2]*edge2[0]-edge1[0]*edge2[2],edge1[0]*edge2[1]-edge1[1]*edge2[0]];
+  let norm=(n[0]*n[0]+n[1]*n[1]+n[2]*n[2]).sqrt();
+  if norm<1e-7 {continue}
+  if n[1].abs()/norm < 0.52 {
+   let un=[n[0]/norm,n[1]/norm,n[2]/norm];
+   let e00=edge1.iter().map(|x|x*x).sum::<f32>();
+   let e01=(0..3).map(|i|edge1[i]*edge2[i]).sum::<f32>();
+   let e11=edge2.iter().map(|x|x*x).sum::<f32>();
+   let denom=e00*e11-e01*e01;
+   if denom<1e-8 {continue}
+   let x0=(low[0]-0.16).floor() as i32;let x1=(high[0]+0.16).ceil() as i32;
+   let y0=(low[1]-0.16).floor() as i32;let y1=(high[1]+0.16).ceil() as i32;
+   let z0=(low[2]-0.16).floor() as i32;let z1=(high[2]+0.16).ceil() as i32;
+   if (x1-x0) as i64*(y1-y0) as i64*(z1-z0) as i64>10_000 {continue}
+   for bx in x0..x1 {for by in y0..y1 {for bz in z0..z1 {
+    let mut bits=[0u64;8];
+    for vy in 0..8 {for vz in 0..8 {for vx in 0..8 {
+     let p=[bx as f32+(vx as f32+0.5)/8.,by as f32+(vy as f32+0.5)/8.,bz as f32+(vz as f32+0.5)/8.];
+     let signed=(0..3).map(|i|(p[i]-a[i])*un[i]).sum::<f32>();
+     if signed.abs()>0.14 {continue}
+     let q=[p[0]-signed*un[0],p[1]-signed*un[1],p[2]-signed*un[2]];
+     let ap=[q[0]-a[0],q[1]-a[1],q[2]-a[2]];
+     let d20=(0..3).map(|i|ap[i]*edge1[i]).sum::<f32>();
+     let d21=(0..3).map(|i|ap[i]*edge2[i]).sum::<f32>();
+     let u=(e11*d20-e01*d21)/denom;
+     let v=(e00*d21-e01*d20)/denom;
+     if u>=-0.04 && v>=-0.04 && u+v<=1.04 {bits[vy]|=1u64<<(vx+8*vz);}
+    }}}
+    if bits.iter().any(|x|*x!=0) {
+     let reg=Region::from_xyz(bx as f32,by as f32,bz as f32);
+     let entry=result.entry(reg).or_default().entry((bx,by,bz)).or_insert([0u64;8]);
+     for i in 0..8{entry[i]|=bits[i]}
+    }
+   }}}
+   continue;
+  }
   for bx in low[0].floor() as i32..high[0].ceil() as i32 {
    for bz in low[2].floor() as i32..high[2].ceil() as i32 {
     for vz in 0..8 {for vx in 0..8 {

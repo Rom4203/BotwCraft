@@ -84,7 +84,22 @@ impl Tiles {
   let path=path_for(&self.root,index.0,index.1);
   if !path.is_file(){self.last_failure.insert(index,Instant::now());return false}
   match load(&path,index.0,index.1){
-   Ok(tile)=>{
+   Ok(mut tile)=>{
+    let decoration=self.root.join("decor").join(format!("{:02}-{:02}.btri",index.0,index.1));
+    if decoration.exists(){
+     match load(&decoration,index.0,index.1){
+      Ok(extra)=>{
+       let base=tile.faces.len();
+       tile.faces.extend(extra.faces);
+       for (key,indices) in extra.columns {
+        tile.columns.entry(key).or_default().extend(indices.into_iter().map(|i|base+i));
+       }
+       println!("[STATIC_TERRAIN] Static decor active for {:?}: {} total triangles",index,tile.faces.len());
+      }
+      Err(e)=>eprintln!("[STATIC_TERRAIN] Invalid static scenery {}: {e}",decoration.display())
+     }
+    }
+
     if self.loaded.len()>=TILE_CACHE_LIMIT {
       // The caller requests nearby tiles first; oldest arbitrary far tile
       // will be reloaded from already converted cache as needed.
