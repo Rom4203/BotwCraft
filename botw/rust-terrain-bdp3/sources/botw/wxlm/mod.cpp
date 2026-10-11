@@ -699,6 +699,13 @@ static void updateTerrainVelocity(const Pose& pose){
     tObservedAt=pose.host_ms;
     tObservedPos={pose.position[0],pose.position[1],pose.position[2]};
 }
+// WiiXLaunch modules are linked -nostdlib: never call libm sqrtf.
+static float terrainSqrt(float x){
+    if(x<=0.f)return 0.f;
+    float a=x>1.f?x:1.f;
+    for(unsigned i=0;i<7;i++)a=0.5f*(a+x/a);
+    return a;
+}
 static Vec3Raw terrainLookahead(const Pose& pose){
     const float vx=tVelocity.x,vz=tVelocity.z;
     const float speed2=vx*vx+vz*vz;
@@ -710,13 +717,13 @@ static Vec3Raw terrainLookahead(const Pose& pose){
         const float fx=pose.forward[0],fz=pose.forward[2];
         const float d2=fx*fx+fz*fz;
         if(d2>0.04f){
-            const float scale=1.5f/__builtin_sqrtf(d2);
+            const float scale=1.5f/terrainSqrt(d2);
             ox=fx*scale;oz=fz*scale;
         }
     }
     const float l2=ox*ox+oz*oz;
     if(l2>kMaxLookahead*kMaxLookahead){
-        const float m=kMaxLookahead/__builtin_sqrtf(l2);
+        const float m=kMaxLookahead/terrainSqrt(l2);
         ox*=m;oz*=m;
     }
     return {pose.position[0]+ox,pose.position[1],pose.position[2]+oz};
