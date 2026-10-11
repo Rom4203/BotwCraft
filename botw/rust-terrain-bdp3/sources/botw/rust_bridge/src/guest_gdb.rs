@@ -197,6 +197,7 @@ pub fn transport_loop(state:Arc<Mutex<Engine>>){
    let mut latency_count=0u64;
    let mut terrain=TerrainRelay::default();
    let mut last_terrain=Instant::now()-Duration::from_secs(1);
+   let mut terrain_disarmed_at:Option<Instant>=None;
    let mut ever_havok=false;
    let mut last_havok_warning=Instant::now()-Duration::from_secs(10);
    let mut last_havok_diagnostic=Instant::now()-Duration::from_secs(10);
@@ -259,11 +260,12 @@ pub fn transport_loop(state:Arc<Mutex<Engine>>){
        last_pose=None;
        println!("[RUST_LINK] Disarmed once. Read-only until active input.");
     }
-    // One *read-only* GDB request at most every 250 ms. Native NX150
+    // Read tiny native terrain mailbox at up to 20Hz (50ms) rather than 4Hz. Native NX150
     // WiiXLaunch samples actual Havok surfaces on the player callback.
     // Recover gracefully if the module lacks this mailbox extension:
     // DO NOT tear down the 120 Hz camera/input link on a raycast error.
-    if armed && authenticated && last_terrain.elapsed()>=Duration::from_millis(250){
+    if armed && authenticated && last_terrain.elapsed()>=Duration::from_millis(50){
+      terrain_disarmed_at=None;
       match remote.read(addr+432,56){
         Ok(samples)=>{
           if samples.len()==56 && last_havok_diagnostic.elapsed()>=Duration::from_secs(8) {
@@ -288,9 +290,15 @@ pub fn transport_loop(state:Arc<Mutex<Engine>>){
       }
       last_terrain=Instant::now();
     }else if !armed && ever_havok{
-      let mut engine=state.lock().map_err(|_|other("bridge mutex poisoned"))?;
-      terrain.clear(&mut engine.mem);
-      ever_havok=false;
+      // Do not discard every real collider on one lost 1-FPS frame / BDP3
+      // handshake. Preserve it for 3 seconds; still clear on disconnect.
+      let since=terrain_disarmed_at.get_or_insert_with(Instant::now);
+      if since.elapsed()>=Duration::from_secs(3){
+        let mut engine=state.lock().map_err(|_|other("bridge mutex poisoned"))?;
+        terrain.clear(&mut engine.mem);
+        ever_havok=false;
+        terrain_disarmed_at=None;
+      }
     }
     if last_report.elapsed()>=Duration::from_secs(5){
       let status=remote.read(addr+196,8).unwrap_or_default();

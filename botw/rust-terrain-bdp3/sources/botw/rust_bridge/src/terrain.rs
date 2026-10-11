@@ -7,8 +7,8 @@ use std::collections::BTreeMap;
 use crate::shared::SharedMap;
 
 const SIZE:usize=56;
-const STEP:f32=2.75;
-const MAX_HEIGHT_EDGE:f32=2.4;
+const STEP:f32=3.4;
+const MAX_HEIGHT_EDGE:f32=3.0;
 const REGION:i32=8;
 const TRI_TERRAIN:u32=8;
 const COL_CLEAR:u32=1;
@@ -75,7 +75,10 @@ fn triangles(guest:&[u8],pose:&[u8])->Option<Vec<Triangle>>{
  let desired=[at(pose,32)?,at(pose,36)?,at(pose,40)?];
  // A previous session's mailbox or a wrong NX150 build must NEVER
  // corrupt Steve's physics with unrelated memory interpreted as heights.
- if (0..3).map(|i|(center[i]-desired[i]).powi(2)).sum::<f32>()>400. {return None}
+ // Host can sprint 15-30 m while Havok resolves a slow emulated ray grid.
+ // The prior 20 m stale filter silently discarded precisely those results.
+ // The rolling cache still rejects geometry farther than 36 m from Steve.
+ if (0..3).map(|i|(center[i]-desired[i]).powi(2)).sum::<f32>()>1225. {return None}
  let mut points=[[0f32;3];9];
  for i in 0..9{
   let h=at(guest,20+i*4)?;
@@ -285,5 +288,24 @@ mod coverage_tests {
   let right=Triangle{v:[[3.,10.,0.],[3.,10.,2.],[4.,10.,0.]]};
   let solid=voxel_regions(&[left,right]);
   assert!(!solid.values().flat_map(|b|b.iter()).any(|(x,_,_,_)| *x==2));
+ }
+}
+
+#[cfg(test)]
+mod lookahead_tests {
+ use super::*;
+ #[test]
+ fn tolerate_a_late_real_havok_result_at_running_speed() {
+  let (mut sample, pose)={
+   let mut g=[0u8;56];let p=[0u8;112];
+   g[0..4].copy_from_slice(&2u32.to_le_bytes());
+   g[4..8].copy_from_slice(&511u32.to_le_bytes());
+   for i in 0..9{g[20+i*4..24+i*4].copy_from_slice(&1f32.to_le_bytes())}
+   (g,p)
+  };
+  sample[8..12].copy_from_slice(&29f32.to_le_bytes());
+  assert_eq!(triangles(&sample,&pose).unwrap().len(),8);
+  sample[8..12].copy_from_slice(&45f32.to_le_bytes());
+  assert!(triangles(&sample,&pose).is_none());
  }
 }

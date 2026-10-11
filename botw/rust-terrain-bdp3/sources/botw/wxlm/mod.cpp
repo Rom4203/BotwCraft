@@ -650,7 +650,77 @@ static uint32_t tPauseTicks=0;
 static float tLastGround=0.0f;
 static bool tHasGround=false;
 static uint32_t tGridNumber=0;
-static constexpr float kTerrainGridStep=2.75f;
+// Cover the route *ahead* of Steve; finished grids remain real Havok hits.
+// This reduces run-ahead holes without drawing speculative/fake ground.
+static constexpr float kTerrainGridStep=3.4f;
+static Vec3Raw tObservedPos{};
+static uint64_t tObservedAt=0;
+static Vec3Raw tVelocity{};
+static constexpr float kPredictSeconds=1.15f;
+static constexpr float kMaxLookahead=3.0f;
+static constexpr unsigned kPriorityRay[9]={4,1,3,5,7,0,2,6,8};
+static unsigned tPartialPublishes=0;
+static bool hasWalkableTriangle(){
+    constexpr unsigned faces[8][3]={
+        {0,3,1},{1,3,4},{1,4,2},{2,4,5},
+        {3,6,4},{4,6,7},{4,7,5},{5,7,8}
+    };
+    for(const auto& f:faces){
+        if(!(tMask&(1u<<f[0])) || !(tMask&(1u<<f[1])) || !(tMask&(1u<<f[2]))) continue;
+        const float a=tHeights[f[0]],b=tHeights[f[1]],c=tHeights[f[2]];
+        const float lo=(a<b?a:b)<c?(a<b?a:b):c;
+        const float hi=(a>b?a:b)>c?(a>b?a:b):c;
+        if(hi-lo<=3.0f)return true;
+    }
+    return false;
+}
+static void updateTerrainVelocity(const Pose& pose){
+    // Host timestamps are independent of slow emulated Zelda frames.
+    // Derive a smoothed world-space velocity without modifying Link/Steve.
+    if(!tObservedAt){
+        tObservedPos={pose.position[0],pose.position[1],pose.position[2]};
+        tObservedAt=pose.host_ms;
+        return;
+    }
+    if(pose.host_ms<=tObservedAt)return;
+    const uint64_t dt=pose.host_ms-tObservedAt;
+    if(dt<65u)return; // avoid unstable speed estimates from 1-2ms intervals
+    const float dx=pose.position[0]-tObservedPos.x;
+    const float dz=pose.position[2]-tObservedPos.z;
+    const float secs=static_cast<float>(dt)*0.001f;
+    const float speed2=(dx*dx+dz*dz)/(secs*secs);
+    if(dt<=650u && speed2<=196.f){ // reject discontinuous teleports
+        const float k=0.6f;
+        tVelocity.x=tVelocity.x*(1.f-k)+k*dx/secs;
+        tVelocity.z=tVelocity.z*(1.f-k)+k*dz/secs;
+    }else{
+        tVelocity.x=0.f;tVelocity.z=0.f;
+    }
+    tObservedAt=pose.host_ms;
+    tObservedPos={pose.position[0],pose.position[1],pose.position[2]};
+}
+static Vec3Raw terrainLookahead(const Pose& pose){
+    const float vx=tVelocity.x,vz=tVelocity.z;
+    const float speed2=vx*vx+vz*vz;
+    float ox=0.f,oz=0.f;
+    if(speed2>0.16f){
+        ox=vx*kPredictSeconds;oz=vz*kPredictSeconds;
+    }else{
+        // At rest, prefetch slightly in the look direction before walking.
+        const float fx=pose.forward[0],fz=pose.forward[2];
+        const float d2=fx*fx+fz*fz;
+        if(d2>0.04f){
+            const float scale=1.5f/__builtin_sqrtf(d2);
+            ox=fx*scale;oz=fz*scale;
+        }
+    }
+    const float l2=ox*ox+oz*oz;
+    if(l2>kMaxLookahead*kMaxLookahead){
+        const float m=kMaxLookahead/__builtin_sqrtf(l2);
+        ox*=m;oz*=m;
+    }
+    return {pose.position[0]+ox,pose.position[1],pose.position[2]+oz};
+}
 static void initializeTerrainQuery(){
     if(tTried)return;
     tTried=true;
@@ -693,10 +763,11 @@ static void publishHavokGrid(){
 static void sampleHavokTerrain(const Pose& pose) {
     initializeTerrainQuery();
     if(!tReady)return;
+    updateTerrainVelocity(pose);
     if(!tGridActive){
         if(tPauseTicks){--tPauseTicks;return;}
-        tCenter={pose.position[0],pose.position[1],pose.position[2]};
-        tNext=0;tFinishedCount=0;tPendingCount=0;tMask=0;tWaitTicks=0;
+        tCenter=terrainLookahead(pose);
+        tNext=0;tFinishedCount=0;tPendingCount=0;tMask=0;tWaitTicks=0;tPartialPublishes=0;
         for(unsigned i=0;i<9;i++){tHeights[i]=0.0f;tPending[i]=nullptr;}
         tGridActive=true;
     }
@@ -736,15 +807,23 @@ static void sampleHavokTerrain(const Pose& pose) {
     if(tFinishedCount==9){
         publishHavokGrid();
         tGridActive=false;
-        tPauseTicks=2; // brief yield after each asynchronous nine-ray grid
+        tPauseTicks=1; // one physics frame to drain before next forward grid
         return;
+    }
+    // Don't wait for the slowest rays: publish truthful partial triangles as
+    // soon as their three Havok heights are available.  The final grid
+    // replaces these partial meshes when all nine requests finish.
+    if(tPartialPublishes<2 && tFinishedCount>=3u &&
+       (tPartialPublishes==0 || tFinishedCount>=6u) && hasWalkableTriangle()){
+        publishHavokGrid();
+        ++tPartialPublishes;
     }
     if(++tWaitTicks>=240u && !tStallWarned){
         tStallWarned=true;
         S::Log("[BOTW_NATIVE] TERRAIN_QUERY_WAITING_FOR_PHYSICS");
     }
     while(tNext<9 && tPendingCount<kTerrainConcurrency){
-        unsigned i=tNext++;
+        unsigned i=kPriorityRay[tNext++];
         const unsigned gx=i%3u, gz=i/3u;
         const float x=tCenter.x+(static_cast<float>(gx)-1.f)*kTerrainGridStep;
         const float z=tCenter.z+(static_cast<float>(gz)-1.f)*kTerrainGridStep;
