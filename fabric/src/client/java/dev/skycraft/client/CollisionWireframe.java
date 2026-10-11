@@ -36,7 +36,7 @@ public final class CollisionWireframe implements ClientModInitializer {
     private static void render(LevelRenderContext context) {
         Minecraft minecraft = Minecraft.getInstance();
         // F1: hideGui=true. Never draw over the normal on-screen HUD.
-        if (!minecraft.options.hideGui || minecraft.level == null || minecraft.player == null) {
+        if (!minecraft.gui.hud.isHidden() || minecraft.level == null || minecraft.player == null) {
             return;
         }
 
