@@ -101,7 +101,13 @@ public final class SkyClient {
         mcState.eyeHeight = player.getEyeHeight();
         mcState.frameCounter = ++frameCounter;
         mcState.teleportAck = 0;
-        mcState.fov = 70.0F;
+        // The Minecraft 26.3 camera caches the EFFECTIVE FOV, after sprint,
+        // speed effects, FOV-effect strength and the user FOV slider.
+        var camera = minecraft.gameRenderer.mainCamera();
+        float fov = camera.isInitialized() ? camera.getFov()
+            : minecraft.options.fov().get().floatValue();
+        if (!Float.isFinite(fov)) fov = 70.0F;
+        mcState.fov = Math.max(30.0F, Math.min(130.0F, fov));
         SkyLink.writeMcState(mcState);
 
         // The native host bridge consumes SkyCraft v11 RenderRing packets.

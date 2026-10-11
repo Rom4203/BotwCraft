@@ -14,7 +14,7 @@ const MAX_TELEPORT:f64=128.0;
 
 #[derive(Clone,Copy)]
 struct McPose{
- frame:u64,pos:[f64;3],yaw:f32,pitch:f32,flags:u32,eye:f32
+ frame:u64,pos:[f64;3],yaw:f32,pitch:f32,flags:u32,eye:f32,fov:f32
 }
 fn finite(v:f64)->bool{v.is_finite() && v.abs()<100000.0}
 
@@ -41,11 +41,12 @@ impl Engine{
    let yaw=self.mem.f32(MC+32);
    let pitch=self.mem.f32(MC+36);
    let eye=self.mem.f32(MC+40);
+   let fov=self.mem.f32(MC+64); // McState FOV relative offset 0x40
    let frame=self.mem.u64(MC+56);
    if seq==self.mem.u32(MC) && frame!=0
       && pos.iter().all(|x|finite(*x)) && finite(yaw as f64)
-      && finite(pitch as f64) && finite(eye as f64){
-    return Some(McPose{frame,pos,yaw,pitch,flags,eye});
+      && finite(pitch as f64) && finite(eye as f64) && finite(fov as f64){
+    return Some(McPose{frame,pos,yaw,pitch,flags,eye,fov});
    }
   }
   None
@@ -120,7 +121,8 @@ impl Engine{
       let eye=[pos[0],pos[1]+eye_height*(1.79/1.62),pos[2]];
       let vals=[pos[0],pos[1],pos[2],eye[0],eye[1],eye[2],
         forward[0],forward[1],forward[2],m.yaw as f64,m.pitch as f64,
-        ma[0],ma[1],ma[2],ga[0],ga[1],ga[2],0.0];
+        ma[0],ma[1],ma[2],ga[0],ga[1],ga[2],
+        if (30.0..=130.0).contains(&m.fov){m.fov as f64}else{70.0}]; // Pose.reserved FOV
       if vals.iter().all(|v|finite(*v)){
        enabled=true;
        // Explicitly authorize the native WXLM actuator only while MC is ready.

@@ -378,6 +378,30 @@ static float s_lastForward[3]={0.f,0.f,1.f};
 static float s_lastLinkPosition[3]={};
 static uint32_t s_lastFpsTick=0;
 static uint32_t s_lastMatrixTick=0;
+static float s_minecraftFovDeg=70.f;
+
+// Freestanding AArch64 module: avoid external libm. Pade approximation to
+// tan(fov/2), well within 0.1% for Minecraft's supported FOV range.
+static float botwTanHalfFov(float deg){
+    const float x=deg*0.008726646259971648f, x2=x*x;
+    return x*(105.f-10.f*x2)/(105.f-45.f*x2+x2*x2);
+}
+static void applyBotwMinecraftFov(void* outputMatrix){
+    // Reuse the proven LookAtCamera hook; never access an unknown projection
+    // object. Changing the camera-space XY scale is optically equivalent
+    // to adjusting the symmetric perspective FOV for visible geometry.
+    const float fov=s_minecraftFovDeg;
+    if (!(fov>=30.f&&fov<=130.f)) return;
+    const float zoom=botwTanHalfFov(70.f)/botwTanHalfFov(fov);
+    if (!(zoom>=0.3f&&zoom<=3.f)) return;
+    const uintptr_t addr=reinterpret_cast<uintptr_t>(outputMatrix);
+    if(addr<0x10000u||(addr&3u))return;
+    volatile float* m=reinterpret_cast<volatile float*>(outputMatrix);
+    for(unsigned i=0;i<8;i++)if(!finiteFloat(m[i]))return;
+    // sead::Matrix34f is row-major. XY rows include their translation.
+    // Do not modify the Z/depth row.
+    for(unsigned i=0;i<8;i++)m[i]*=zoom;
+}
 using CameraMatrixUpdate=void (*)(void*,void*);
 static CameraMatrixUpdate s_cameraMatrixOriginal=nullptr;
 
@@ -403,6 +427,7 @@ static bool setCameraLookAt(uintptr_t ptr,const float eye[3],const float forward
 extern "C" __attribute__((used)) void BotwCraftFirstPersonMatrix(
      void* camera,void* outputMatrix) {
     const uintptr_t ptr=reinterpret_cast<uintptr_t>(camera);
+    bool botwFovCamera=false;
     if (ptr>=0x10000u && (ptr&7u)==0 &&
         s_lastFpsTick && s_ticks>=s_lastFpsTick &&
         s_ticks-s_lastFpsTick<=3u) {
@@ -417,6 +442,7 @@ extern "C" __attribute__((used)) void BotwCraftFirstPersonMatrix(
             if (dx*dx+dy*dy+dz*dz < 10000.f &&
                 setCameraLookAt(ptr,s_lastEye,s_lastForward)) {
                 s_liveCamera=ptr;
+                botwFovCamera=true;
                 s_lastMatrixTick=s_ticks;
                 g_BotwCraftLiveMailbox.camera_pointer=ptr;
                 ++g_BotwCraftLiveMailbox.camera_matrix_frames;
@@ -432,8 +458,11 @@ extern "C" __attribute__((used)) void BotwCraftFirstPersonMatrix(
     if (s_activeActorHandle && s_lastFpsTick &&
         s_ticks>=s_lastFpsTick && s_ticks-s_lastFpsTick<=3u)
         updateVisualModel(s_activeActorHandle,true);
-    if (s_cameraMatrixOriginal)
+    if (s_cameraMatrixOriginal){
         s_cameraMatrixOriginal(camera,outputMatrix);
+        // Only the validated gameplay FPS camera gets the optical correction.
+        if(botwFovCamera)applyBotwMinecraftFov(outputMatrix);
+    }
 }
 static void installGameplayCameraHook() {
     if(s_cameraHookTried)return;
@@ -466,6 +495,7 @@ static bool updateCameraFromGame(const Pose& p) {
         s_lastForward[i]=p.forward[i];
         s_lastLinkPosition[i]=p.position[i];
     }
+    s_minecraftFovDeg=finiteFloat(p.reserved) && p.reserved>=30.f && p.reserved<=130.f ? p.reserved : 70.f;
     s_lastFpsTick=s_ticks;
     installGameplayCameraHook();
     // Hook installation alone is not proof of in-game FPS mode.

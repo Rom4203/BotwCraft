@@ -187,7 +187,7 @@ fn publish_fast(remote:&mut Remote,addr:usize,packet:&[u8],slot:&mut u32)->io::R
 fn materially_changed(a:&[u8],b:&[u8])->bool{
     // Compare inputs that affect the Zelda image (pos, eye, forward,
     // yaw, pitch) but IGNORE frame counter / clock / unused origins.
-    a[12..16]!=b[12..16] || a[32..76]!=b[32..76]
+    a[12..16]!=b[12..16] || a[32..76]!=b[32..76] || a[100..104]!=b[100..104]
 }
 pub fn transport_loop(state:Arc<Mutex<Engine>>){
  loop{
