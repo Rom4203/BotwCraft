@@ -12,7 +12,7 @@
   "environment": "client",
   "entrypoints": {
     "main": ["dev.skycraft.SkyCraft"],
-    "client": ["dev.skycraft.client.SkyCraftClient"]
+    "client": ["dev.skycraft.client.SkyCraftClient", "dev.skycraft.client.CollisionWireframe"]
   },
   "mixins": [
     "skycraft.mixins.json",
