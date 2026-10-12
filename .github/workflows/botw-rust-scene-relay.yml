@@ -1,0 +1,35 @@
+name: BotwCraft Rust scene relay
+
+on:
+  push:
+    paths:
+      - "botw/rust-scene-relay/**"
+      - ".github/workflows/botw-rust-scene-relay.yml"
+  pull_request:
+    paths:
+      - "botw/rust-scene-relay/**"
+      - ".github/workflows/botw-rust-scene-relay.yml"
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: botw/rust-scene-relay
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unit tests
+        run: cargo test --offline --all-targets
+      - name: Release build
+        run: cargo build --offline --release
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: botw/rust-scene-relay
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unit tests
+        run: cargo test --offline --all-targets
+      - name: Release build
+        run: cargo build --offline --release
