@@ -1,0 +1,10 @@
+[package]
+name = "botwcraft-rust-scene-relay"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Read authentic SkyCraft v11 block meshes/atlas and generate BWC2 world-space packets"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
