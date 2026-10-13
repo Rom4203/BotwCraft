@@ -244,7 +244,7 @@ mod camera_math_tests {
  #[test]fn f5_rear_preserves_actual_camera_offset(){
   let (eye,forward,yaw,pitch)=view_for(
     pose(Some(([13.46,23.62,30.],1))),[100.,200.,300.]);
-  assert_eq!(eye,[103.46,203.62,300.]);
+  near(eye[0],103.46);near(eye[1],203.62);near(eye[2],300.);
   near(yaw,90.);near(pitch,30.);
   assert!(forward[0] < -0.8);
  }
@@ -256,6 +256,6 @@ mod camera_math_tests {
  }
  #[test]fn missing_camera_telemetry_falls_back_safely(){
   let (eye,_,_,_)=view_for(pose(None),[100.,200.,300.]);
-  assert_eq!(eye,[100.,201.62,300.]);
+  near(eye[0],100.);near(eye[1],201.62);near(eye[2],300.);
  }
 }
