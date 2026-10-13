@@ -11,6 +11,9 @@ eframe = { version = "0.33", default-features = false, features = ["wgpu", "defa
 # Cargo features are additive: these backends enable the wgpu 27 renderer.
 wgpu = { version = "27", default-features = false, features = ["vulkan", "dx12"] }
 windows-capture = "2.0.1"
+egui-wgpu = "0.33"
+bytemuck = { version = "1.21", features = ["derive"] }
+botwcraft-rust-scene-relay = { path = "../rust-scene-relay" }
 
 [profile.release]
 lto = "thin"
