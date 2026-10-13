@@ -153,6 +153,7 @@ impl Default for Snapshot{
 }
 pub struct Layer {
  map:Option<Map>,scene:Scene,last_try:Instant,
+ last_mesh_eye:Option<[f32;3]>,
  frame:Arc<Mutex<Snapshot>>, pub id:egui::TextureId,
 }
 impl Layer {
@@ -161,7 +162,7 @@ impl Layer {
    let gpu=Gpu::new(&rs.device);
    let id=rs.renderer.write().register_native_texture(&rs.device,&gpu.color_view,wgpu::FilterMode::Linear);
    rs.renderer.write().callback_resources.insert(gpu);
-   Self{map:None,scene:Scene::default(),
+   Self{map:None,scene:Scene::default(),last_mesh_eye:None,
      last_try:Instant::now()-Duration::from_secs(3),
      frame:Arc::new(Mutex::new(Snapshot::default())),id}
  }
@@ -172,17 +173,24 @@ impl Layer {
    let mut snap=self.frame.lock().unwrap();
    let Some(map)=&self.map else {snap.cam=None;return;};
    if map.u32(0)!=MAGIC||map.u32(4)!=VERSION{
-     self.map=None;self.scene=Scene::default();snap.cam=None;return;
+     self.map=None;self.scene=Scene::default();self.last_mesh_eye=None;snap.cam=None;return;
    }
    snap.cam=map.camera();
    // No active MC camera -> don't render ghost blocks over the Zelda menu.
    let (mesh_changed,atlas_changed)=map.drain(&mut self.scene);
-   if mesh_changed{
-     // Culling must use actual Zelda optical eye translated back to MC.
-     // Using matrix translation directly breaks whenever the camera turns.
-     let eye=if let Some(cam)=snap.cam {
-       std::array::from_fn(|i|cam.eye[i]-cam.shift[i])
-     }else{[0.;3]};
+   // Rebuild when the native camera first appears OR crosses the 32-block
+   // culling-cell margin. The mesh stream may arrive before Zelda's hook.
+   let mc_eye=snap.cam.map(|cam:Camera|
+     std::array::from_fn(|i|cam.eye[i]-cam.shift[i]));
+   let culling_changed=match (self.last_mesh_eye,mc_eye){
+     (None,Some(_))=>true,
+     (Some(last),Some(now))=>(0..3).map(|i|(last[i]-now[i]).powi(2)).sum::<f32>()>32.0f32.powi(2),
+     (Some(_),None)=>true,
+     _=>false,
+   };
+   if mesh_changed||culling_changed {
+     let eye=mc_eye.unwrap_or([0.;3]);
+     self.last_mesh_eye=mc_eye;
      let mut sections:Vec<_>=self.scene.sections.iter().filter_map(|(pos,vertices)|{
        let origin=[pos.0 as f32*16.,pos.1 as f32*16.,pos.2 as f32*16.];
        let d=(0..3).map(|i|(origin[i]+8.-eye[i]).powi(2)).sum::<f32>();
