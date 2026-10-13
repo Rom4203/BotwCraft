@@ -1,0 +1,30 @@
+[package]
+name = "botwcraft-rust-gpu-blocks"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "botwcraft-rust-gpu-blocks"
+path = "src/main.rs"
+
+[dependencies]
+botwcraft-rust-scene-relay = { path = "../rust-scene-relay" }
+bytemuck = { version = "1.21", features = ["derive"] }
+pollster = "0.4"
+wgpu = "27"
+winit = "0.30"
+raw-window-handle = "0.6"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+  "Win32_Foundation",
+  "Win32_UI_WindowsAndMessaging",
+  "Win32_Graphics_Gdi",
+  "Win32_System_Memory",
+  "Win32_System_SystemInformation",
+] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
