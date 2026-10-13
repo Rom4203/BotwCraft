@@ -78,7 +78,7 @@ impl Map {
      view[r*4]*eye[0]+view[r*4+1]*eye[1]+view[r*4+2]*eye[2]+view[r*4+3]
    });
    if camera_space.iter().any(|c|c.abs()>2.) {return None;}
-   Some(Camera{view,shift,depth_sign})
+   Some(Camera{eye,view,shift,depth_sign})
  }
  /// Consume bounded complete packets. Exactly one consumer advances the tail.
  /// Renderer never reads stale or unpublished data.
@@ -117,7 +117,7 @@ impl Map {
  }
 }
 #[derive(Clone,Copy)]
-struct Camera{view:[f32;12],shift:[f32;3],depth_sign:f32}
+struct Camera{eye:[f32;3],view:[f32;12],shift:[f32;3],depth_sign:f32}
 #[repr(C)]
 #[derive(Clone,Copy,bytemuck::Pod,bytemuck::Zeroable)]
 struct GpuVertex{xyz:[f32;3],uv:[f32;2],tint:u32,light:u32,flags:u32}
@@ -178,14 +178,10 @@ impl Layer {
    // No active MC camera -> don't render ghost blocks over the Zelda menu.
    let (mesh_changed,atlas_changed)=map.drain(&mut self.scene);
    if mesh_changed{
-     // Culling stays relative to the actual MC player, not Zelda's absolute
-     // origin. The current native view carries the world-to-Hyrule offset.
+     // Culling must use actual Zelda optical eye translated back to MC.
+     // Using matrix translation directly breaks whenever the camera turns.
      let eye=if let Some(cam)=snap.cam {
-       // Approximate MC-space eye from world anchor and native viewpoint.
-       // No Minecraft optical camera or FOV enters the projection.
-       let view=cam.view;let shift=cam.shift;
-       let x=-view[3];let y=-view[7];let z=-view[11];
-       [x-shift[0],y-shift[1],z-shift[2]]
+       std::array::from_fn(|i|cam.eye[i]-cam.shift[i])
      }else{[0.;3]};
      let mut sections:Vec<_>=self.scene.sections.iter().filter_map(|(pos,vertices)|{
        let origin=[pos.0 as f32*16.,pos.1 as f32*16.,pos.2 as f32*16.];
@@ -359,7 +355,7 @@ impl Gpu {
 mod tests {
  use super::*;
  #[test]fn native_zeldaview_is_unaffected_by_minecraft_fov(){
-   let cam=Camera{view:[1.,0.,0.,-11.,0.,1.,0.,-21.,0.,0.,1.,-31.],
+   let cam=Camera{eye:[11.,21.,31.],view:[1.,0.,0.,-11.,0.,1.,0.,-21.,0.,0.,1.,-31.],
      shift:[100.,200.,300.],depth_sign:1.};
    let u=uniform(cam);
    assert_eq!(u.right,[1.,0.,0.,-11.]);
