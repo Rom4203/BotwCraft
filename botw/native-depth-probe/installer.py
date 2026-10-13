@@ -12,9 +12,14 @@ def profile():
     if (x:=os.getenv("APPDATA")): paths.append(Path(x)/"Ryujinx")
     if (x:=os.getenv("LOCALAPPDATA")): paths.append(Path(x)/"Ryujinx")
     paths += [Path(r"D:\\Jeux\\Emu\\ryujinx\\portable"),Path(r"D:\\Jeux\\Emu\\ryujinx")]
-    for candidate in paths:
-        if (candidate/"Config.json").is_file():return candidate
-    print("Profil Ryujinx introuvable automatiquement.")
+    valid=[p for p in paths if (p/"Config.json").is_file()]
+    # Prefer the profile that actually contains the working BotwCraft,
+    # not an old unused AppData profile when Ryujinx is in portable mode.
+    for p in valid:
+        stable=p/"mods"/"contents"/TITLE.lower()/"BotwCraft"/"romfs"/"WiiXLaunch"/"mods"/"bwc_pose.wxlm"
+        if stable.is_file():return p
+    if len(valid)==1:return valid[0]
+    print("Profil BotwCraft Ryujinx introuvable automatiquement.")
     p=Path(input("Dossier qui contient Config.json : ").strip().strip('"'))
     if not (p/"Config.json").is_file():raise RuntimeError("Config.json absent")
     return p
