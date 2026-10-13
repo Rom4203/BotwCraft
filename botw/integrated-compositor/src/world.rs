@@ -46,7 +46,7 @@ impl Map {
  fn u64(&self,off:usize)->u64{self.ptr(off,8).map_or(0,|p|unsafe{(*(p as *const AtomicU64)).load(Ordering::Acquire)})}
  fn set_tail(&self,v:u64){
    if let Some(p)=self.ptr(RENDER_RING+0x40,8){
-     unsafe{(*(p as *const AtomicU64 as *mut AtomicU64)).as_ref().unwrap().store(v,Ordering::Release);}
+     unsafe{(*(p as *const AtomicU64)).store(v,Ordering::Release);}
    }
  }
  fn camera(&self)->Option<Camera>{
