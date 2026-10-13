@@ -21,6 +21,7 @@ fn Process32FirstW(h:H,e:*mut Entry)->i32;
 fn Process32NextW(h:H,e:*mut Entry)->i32;
 fn OpenProcess(flags:u32,inherit:i32,pid:u32)->H;
 fn CloseHandle(h:H)->i32;
+fn GetCurrentProcessId()->u32;
 fn VirtualQueryEx(h:H,p:*const c_void,m:*mut Mbi,len:usize)->usize;
 fn ReadProcessMemory(h:H,p:*const c_void,b:*mut c_void,len:usize,done:*mut usize)->i32;
 fn WriteProcessMemory(h:H,p:*mut c_void,b:*const c_void,len:usize,done:*mut usize)->i32;
@@ -79,6 +80,23 @@ impl Process{
  }
 }
 pub fn main(){
+ if std::env::args().any(|a|a=="--selftest") {
+  let mut data=vec![0u8;300_000];
+  let offset=16_384usize;
+  data[offset..offset+4].copy_from_slice(&MAGIC.to_le_bytes());
+  data[offset+12..offset+16].copy_from_slice(&COOKIE.to_le_bytes());
+  let addr=data.as_ptr() as usize+offset;
+  let id=unsafe{GetCurrentProcessId()};
+  let mut p=Process::open(id).expect("cannot open self process");
+  assert_eq!(p.scan(),Some(addr),"cannot find native buffer in process");
+  p.mail=addr;
+  assert!(p.send(&vec![0u8;96]));
+  assert_eq!(u32::from_le_bytes(data[offset+4..offset+8].try_into().unwrap()),1);
+  let first=offset+0x10080;
+  assert_eq!(u32::from_le_bytes(data[first..first+4].try_into().unwrap()),3);
+  println!("[BWC4] Windows WriteProcessMemory + mailbox scan selftest OK");
+  return;
+ }
  println!("[BWC4] Rust direct-memory writer started; existing GDB bridge remains untouched");
  let mut input=io::stdin().lock();let mut process:Option<Process>=None;let mut last_scan=Instant::now()-Duration::from_secs(10);
  loop{
