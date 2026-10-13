@@ -191,9 +191,10 @@ namespace {
    __atomic_add_fetch(&s.draw_callbacks,1u,__ATOMIC_RELAXED);
    __atomic_store_n(&s.display_color,texture,__ATOMIC_RELAXED);
    __atomic_store_n(&s.display_cmd,cmd,__ATOMIC_RELAXED);
-   __atomic_store_n(&s.display_frame,s_ticks,__ATOMIC_RELAXED);
+   const uint32_t tick=__atomic_load_n(&s_ticks,__ATOMIC_ACQUIRE);
+   __atomic_store_n(&s.display_frame,tick,__ATOMIC_RELAXED);
    const uint32_t frame=__atomic_load_n(&s.candidate_frame,__ATOMIC_RELAXED);
-   if(frame+1>=s_ticks) {
+   if(frame+1>=tick) {
      __atomic_add_fetch(&s.depth_seen_during_draw,1u,__ATOMIC_RELAXED);
      __atomic_store_n(&s.last_scanout_depth,
          __atomic_load_n(&s.candidate_depth,__ATOMIC_RELAXED),__ATOMIC_RELAXED);
@@ -205,9 +206,9 @@ namespace {
  }
 
  static void Tick(){
-   ++s_ticks;
-   if(s_ticks-s_lastPrinted>=300u && g_NvnDepthProbe.status==kHookInstalled){
-     s_lastPrinted=s_ticks;
+   const uint32_t tick=__atomic_add_fetch(&s_ticks,1u,__ATOMIC_RELEASE);
+   if(tick-s_lastPrinted>=300u && g_NvnDepthProbe.status==kHookInstalled){
+     s_lastPrinted=tick;
      report();
      // Depth attachment is a pointer observed during frame submission.
      // NEVER treat it as a safe drawable scene depth until Ryujinx confirms
