@@ -1,5 +1,5 @@
 from __future__ import annotations
-import os, subprocess, hashlib, shutil, sys
+import os, subprocess, shutil, sys
 from pathlib import Path
 
 TITLE="01007EF00011E000"
@@ -24,6 +24,10 @@ def main():
     p=subprocess.run(["tasklist","/FI","IMAGENAME eq Ryujinx.exe","/NH"],capture_output=True,text=True)
     if "ryujinx.exe" in p.stdout.lower():raise RuntimeError("Ferme Ryujinx avant l'installation")
     base=profile()
+    stable=base/"mods"/"contents"/TITLE.lower()/"BotwCraft"/"romfs"/"WiiXLaunch"/"mods"/"bwc_pose.wxlm"
+    # Windows is case-insensitive, so TITLE.lower() matches the stock installer.
+    if not stable.is_file():
+        raise RuntimeError("Installe d'abord ton BotwCraft habituel, module bwc_pose introuvable : "+str(stable))
     # A separate Ryujinx content mod: no modification to the user's working BotwCraft.
     mod=base/"mods"/"contents"/TITLE/MOD_NAME
     path=mod/"romfs"/"WiiXLaunch"/"mods"/PROBE
@@ -38,7 +42,7 @@ def main():
     print("Profil :",base)
     print("Module additionnel :",path)
     print("AUCUN module BotwCraft, Minecraft ou subsdk9 existant n'est remplace.")
-    if input("Installer le diagnostic experiment al ? (O/N) : ").strip().lower()!="o":
+    if input("Installer le diagnostic experimental ? (O/N) : ").strip().lower()!="o":
         print("Annule");return
     for dst in (path,sd):
         if dst.exists() and dst.read_bytes()!=file.read_bytes():
