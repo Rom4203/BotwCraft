@@ -1,6 +1,8 @@
 from __future__ import annotations
 import os
 import time
+import struct
+import re
 from pathlib import Path
 
 # Read the combined BotwCraft launcher log FIRST. When launch.py starts
@@ -118,6 +120,28 @@ def main():
             time.sleep(.6)
             continue
 
+        # Compare loader fingerprint with the actual module in this ZIP.
+        # A loaded old probe is easy to mistake for a broken callback.
+        local_probe=ROOT/"bwc_depth_probe.wxlm"
+        if local_probe.exists():
+            try:
+                expected=struct.unpack_from("<I",local_probe.read_bytes(),40)[0]
+                matches=re.findall(r"\\[loader:bwc_depth_probe\\] integrity OK \\(crc32 0x([0-9A-Fa-f]+)",content)
+                if matches:
+                    actual=int(matches[-1],16)
+                    marker=("module-collision",expected,actual)
+                    if marker not in printed:
+                        printed.add(marker)
+                        if actual!=expected:
+                            print("[DIAGNOSTIC] ANCIEN MODULE DETECTE : Ryujinx 0x%08X ; ZIP 0x%08X" %
+                                  (actual,expected),flush=True)
+                            print("Ferme Ryujinx et relance INSTALLER_COMPLET.bat : I, puis redemarre le jeu.",
+                                  flush=True)
+                        else:
+                            print("[DIAGNOSTIC] BON MODULE : CRC 0x%08X confirme dans Ryujinx" % expected,
+                                  flush=True)
+            except (OSError,ValueError,struct.error):
+                pass
         # This log is appended to by the standard BotwCraft Python launcher.
         # Keep track of printed rows, including across the first read.
         for line in content.splitlines():
