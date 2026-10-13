@@ -126,7 +126,7 @@ def main():
         if local_probe.exists():
             try:
                 expected=struct.unpack_from("<I",local_probe.read_bytes(),40)[0]
-                matches=re.findall(r"\\[loader:bwc_depth_probe\\] integrity OK \\(crc32 0x([0-9A-Fa-f]+)",content)
+                matches=re.findall(r"\[loader:bwc_depth_probe\] integrity OK \(crc32 0x([0-9A-Fa-f]+)", content)
                 if matches:
                     actual=int(matches[-1],16)
                     marker=("module-collision",expected,actual)
