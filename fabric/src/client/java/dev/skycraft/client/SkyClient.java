@@ -109,6 +109,10 @@ public final class SkyClient {
         if (!Float.isFinite(fov)) fov = 70.0F;
         mcState.fov = Math.max(30.0F, Math.min(130.0F, fov));
         SkyLink.writeMcState(mcState);
+        // Camera for imported Minecraft geometry is authored here in Java
+        // from Zelda telemetry. Rust MUST NOT read Minecraft's player POV.
+        BotwDedicatedCamera.publish(telemetryReady ? observedLink : null,
+            player.getEyeHeight(), mcState.fov, minecraft.gui.screen() != null);
 
         // The native host bridge consumes SkyCraft v11 RenderRing packets.
         // It cannot draw them in Zelda until WiiXLaunch's SD reader works.
