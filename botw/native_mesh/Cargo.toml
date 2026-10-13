@@ -1,0 +1,10 @@
+[package]
+name = "botwcraft-memory-writer"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+panic = "abort"
