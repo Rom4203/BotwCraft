@@ -102,6 +102,14 @@ impl McCamera {
 mod tests {
     use super::*;
     #[test]
+    fn shader_parses_and_validates() {
+        let module=naga::front::wgsl::parse_str(include_str!("../shaders/minecraft.wgsl"))
+            .expect("Minecraft atlas shader must parse");
+        naga::valid::Validator::new(naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::all())
+            .validate(&module).expect("Minecraft atlas shader must validate");
+    }
+    #[test]
     fn direction_and_fov() {
         let c=McCamera{ready:true,gui_open:false,..McCamera::default()};
         let u=c.uniform(1920,1080);
