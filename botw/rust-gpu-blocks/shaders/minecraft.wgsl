@@ -55,5 +55,6 @@ fn vs_main(v:Input)->Vertex{
 fn fs_main(v:Vertex)->@location(0) vec4<f32>{
     let rgba=textureSample(atlas,tex_sampler,v.uv)*v.color;
     if (rgba.a < 0.125) { discard; }
-    return rgba;
+    // Swapchain expects premultiplied alpha for true desktop transparency.
+    return vec4<f32>(rgba.rgb*rgba.a,rgba.a);
 }
