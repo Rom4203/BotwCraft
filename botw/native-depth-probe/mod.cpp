@@ -120,7 +120,15 @@ namespace {
        __atomic_store_n(&s.candidate_frame,s_ticks,__ATOMIC_RELAXED);
      }
    }
-   if(s_original) s_original(cmd,colors,color,colorResolve,depth,depthResolve);
+   // Hook can run on a distinct NVN thread immediately after patching.
+   // Never call the patched game function itself (infinite recursion).
+   // Wait briefly until InstallHook hands us its ORIGINAL trampoline.
+   BindTargetsFn original=__atomic_load_n(&s_original,__ATOMIC_ACQUIRE);
+   for(unsigned i=0;i<100000u && !original;i++){
+      __asm__ __volatile__("yield" ::: "memory");
+      original=__atomic_load_n(&s_original,__ATOMIC_ACQUIRE);
+   }
+   if(original)original(cmd,colors,color,colorResolve,depth,depthResolve);
  }
 
  static void ObserveScanout(uintptr_t cmd,uintptr_t texture,int32_t width,int32_t height) {
@@ -178,7 +186,7 @@ namespace {
      if(Core::Log)Core::Log("[DEPTH_PROBE] Runtime refused NVN hook; no render target changed");
      return;
    }
-   s_original=reinterpret_cast<BindTargetsFn>(original);
+   __atomic_store_n(&s_original,reinterpret_cast<BindTargetsFn>(original),__ATOMIC_RELEASE);
    g_NvnDepthProbe.status=kHookInstalled;
    if(Core::Log)Core::Log("[DEPTH_PROBE] NVN SetRenderTargets observer installed: PASSIVE, original called");
  }
