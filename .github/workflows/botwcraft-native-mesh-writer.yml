@@ -1,0 +1,21 @@
+name: BotwCraft native mesh writer
+on:
+  push:
+    paths:
+      - "botw/native_mesh/**"
+      - ".github/workflows/botwcraft-native-mesh-writer.yml"
+  pull_request:
+    paths:
+      - "botw/native_mesh/**"
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --manifest-path botw/native_mesh/Cargo.toml --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: botwcraft-memory-writer
+          path: botw/native_mesh/target/release/botwcraft-memory-writer.exe
+          if-no-files-found: error
