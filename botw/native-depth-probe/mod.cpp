@@ -47,9 +47,16 @@ namespace {
    volatile uintptr_t display_cmd;
    volatile uint32_t candidate_frame;
    volatile uint32_t display_frame;
+   // Hardware-only measurements; never dereference these raw game pointers.
+   volatile uint32_t same_cmd_depth_and_display;
+   volatile uint32_t color_is_display;
+   volatile uint32_t candidate_changes;
+   volatile uint32_t same_depth_reuse;
+   volatile uintptr_t previous_depth;
+   volatile uintptr_t last_scanout_depth;
  };
  extern "C" __attribute__((used,aligned(16))) Stats g_NvnDepthProbe{
-   kMagic,kArm,kIdle,0,0,0,0,0,0,0,0,0,0,0,0
+   kMagic,kArm,kIdle
  };
  using BindTargetsFn=void(*)(void*,int,const void* const*,const void*,
                              const void*,const void*);
@@ -57,6 +64,26 @@ namespace {
  static bool s_attempted=false;
  static uint32_t s_ticks=0;
  static uint32_t s_lastDepthCount=0;
+ static uint32_t s_lastPrinted=0;
+ // WiiXLaunch modules are freestanding ARM64 (no sprintf). Keep logs bounded.
+ static void appendNumber(char*& dest,uint32_t v){
+    char tmp[12];unsigned n=0;
+    do {tmp[n++]=char('0'+v%10);v/=10;}while(v&&n<sizeof(tmp));
+    while(n)*dest++=tmp[--n];
+ }
+ static void report(){
+    char line[250]{};char* out=line;
+    auto lit=[&out](const char* p){while(*p)*out++=*p++;};
+    const auto& s=g_NvnDepthProbe;
+    lit("[DEPTH_PROBE] calls=");appendNumber(out,s.all_calls);
+    lit(" color+depth=");appendNumber(out,s.depth_and_color_calls);
+    lit(" scanout=");appendNumber(out,s.draw_callbacks);
+    lit(" sameCmd=");appendNumber(out,s.same_cmd_depth_and_display);
+    lit(" sameColor=");appendNumber(out,s.color_is_display);
+    lit(" reusedDepth=");appendNumber(out,s.same_depth_reuse);
+    lit(" depthChanges=");appendNumber(out,s.candidate_changes);
+    *out=0;if(Core::Log)Core::Log(line);
+ }
 
  static void printAddr(const char* label,uintptr_t addr){
    char line[128]{};
@@ -83,7 +110,11 @@ namespace {
      const void* color0=colors>0 && colors<=8 && color?color[0]:nullptr;
      if(color0){
        __atomic_add_fetch(&s.depth_and_color_calls,1u,__ATOMIC_RELAXED);
-       __atomic_store_n(&s.candidate_depth,reinterpret_cast<uintptr_t>(depth),__ATOMIC_RELAXED);
+       const uintptr_t newDepth=reinterpret_cast<uintptr_t>(depth);
+       const uintptr_t oldDepth=__atomic_exchange_n(&s.previous_depth,newDepth,__ATOMIC_RELAXED);
+       if(oldDepth==newDepth)__atomic_add_fetch(&s.same_depth_reuse,1u,__ATOMIC_RELAXED);
+       else if(oldDepth!=0)__atomic_add_fetch(&s.candidate_changes,1u,__ATOMIC_RELAXED);
+       __atomic_store_n(&s.candidate_depth,newDepth,__ATOMIC_RELAXED);
        __atomic_store_n(&s.candidate_color,reinterpret_cast<uintptr_t>(color0),__ATOMIC_RELAXED);
        __atomic_store_n(&s.candidate_cmd,reinterpret_cast<uintptr_t>(cmd),__ATOMIC_RELAXED);
        __atomic_store_n(&s.candidate_frame,s_ticks,__ATOMIC_RELAXED);
@@ -99,18 +130,26 @@ namespace {
    __atomic_store_n(&s.display_color,texture,__ATOMIC_RELAXED);
    __atomic_store_n(&s.display_cmd,cmd,__ATOMIC_RELAXED);
    __atomic_store_n(&s.display_frame,s_ticks,__ATOMIC_RELAXED);
-   if(__atomic_load_n(&s.candidate_frame,__ATOMIC_RELAXED)+1>=s_ticks)
+   const uint32_t frame=__atomic_load_n(&s.candidate_frame,__ATOMIC_RELAXED);
+   if(frame+1>=s_ticks) {
      __atomic_add_fetch(&s.depth_seen_during_draw,1u,__ATOMIC_RELAXED);
+     __atomic_store_n(&s.last_scanout_depth,
+         __atomic_load_n(&s.candidate_depth,__ATOMIC_RELAXED),__ATOMIC_RELAXED);
+     if(cmd==__atomic_load_n(&s.candidate_cmd,__ATOMIC_RELAXED))
+       __atomic_add_fetch(&s.same_cmd_depth_and_display,1u,__ATOMIC_RELAXED);
+     if(texture==__atomic_load_n(&s.candidate_color,__ATOMIC_RELAXED))
+       __atomic_add_fetch(&s.color_is_display,1u,__ATOMIC_RELAXED);
+   }
  }
 
  static void Tick(){
    ++s_ticks;
-   if(s_ticks%600==0 && g_NvnDepthProbe.status==kHookInstalled){
-      uint32_t count=g_NvnDepthProbe.depth_and_color_calls;
-      if(count!=s_lastDepthCount){
-         s_lastDepthCount=count;
-         if(Core::Log)Core::Log("[DEPTH_PROBE] Native NVN real depth+color targets observed; read NDP1 mailbox for candidate pointers");
-      }
+   if(s_ticks-s_lastPrinted>=300u && g_NvnDepthProbe.status==kHookInstalled){
+     s_lastPrinted=s_ticks;
+     report();
+     // Depth attachment is a pointer observed during frame submission.
+     // NEVER treat it as a safe drawable scene depth until Ryujinx confirms
+     // attachment identity, lifetime, viewport and command-buffer ownership.
    }
    if(s_attempted || g_NvnDepthProbe.arm!=kArm)return;
    s_attempted=true;
