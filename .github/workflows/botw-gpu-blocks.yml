@@ -1,0 +1,30 @@
+name: BotwCraft Windows GPU blocks
+on:
+  push:
+    paths:
+      - "botw/rust-gpu-blocks/**"
+      - "botw/rust-scene-relay/**"
+      - ".github/workflows/botw-gpu-blocks.yml"
+  pull_request:
+    paths:
+      - "botw/rust-gpu-blocks/**"
+      - "botw/rust-scene-relay/**"
+      - ".github/workflows/botw-gpu-blocks.yml"
+jobs:
+  gpu-win:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: botw/rust-gpu-blocks
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust tests
+        run: cargo test --all-targets
+      - name: Rust GPU release executable
+        run: cargo build --release
+      - name: Upload GPU executable (experimental)
+        uses: actions/upload-artifact@v4
+        with:
+          name: botwcraft-rust-gpu-blocks-windows-experimental
+          path: botw/rust-gpu-blocks/target/release/botwcraft-rust-gpu-blocks.exe
+          if-no-files-found: error
