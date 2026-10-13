@@ -128,7 +128,7 @@ fn uniform(cam:Camera)->CameraUniform{
  // Minecraft: yaw 0 looks +Z, positive pitch down.
  let forward=[-sy*cp,-sp,cy*cp,0.];
  let right=[cy,0.,sy,0.];
- let up=[sy*sp,cp,-cy*sp,0.];
+ let up=[-sy*sp,cp,cy*sp,0.];
  let cot=1./(cam.fov.to_radians()*0.5).tan();
  CameraUniform{
    eye:[cam.eye[0],cam.eye[1],cam.eye[2],0.],
