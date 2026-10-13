@@ -1,0 +1,33 @@
+name: Minecraft 26.3 isolated GUI layer
+on:
+  push:
+    paths:
+      - "fabric/**"
+      - ".github/workflows/botw-java-gui-layer.yml"
+  pull_request:
+    paths:
+      - "fabric/**"
+      - ".github/workflows/botw-java-gui-layer.yml"
+jobs:
+  fabric:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: fabric
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Compile and package mod
+        shell: pwsh
+        run: .\gradlew.bat build --no-daemon --stacktrace
+      - name: Publish experimental Fabric JAR
+        uses: actions/upload-artifact@v4
+        with:
+          name: botwcraft-fabric-gui-layer-experimental
+          path: fabric/build/libs/*.jar
+          if-no-files-found: error
