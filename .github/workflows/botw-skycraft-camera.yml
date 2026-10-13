@@ -1,0 +1,47 @@
+name: BotwCraft SkyCraft camera parity
+on:
+  push:
+    branches: [botwcraft/skycraft-camera-match-20261013]
+    paths:
+      - 'fabric/**'
+      - 'botw/rust-terrain-bdp3/sources/botw/rust_bridge/**'
+      - '.github/workflows/botw-skycraft-camera.yml'
+  workflow_dispatch:
+jobs:
+  camera-rust:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Test F5 camera transforms and transport
+        working-directory: botw/rust-terrain-bdp3/sources/botw/rust_bridge
+        run: cargo test --verbose
+      - name: Build actual Windows native bridge
+        working-directory: botw/rust-terrain-bdp3/sources/botw/rust_bridge
+        run: cargo build --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BotwCraft-SkyCraft-Camera-Rust
+          path: botw/rust-terrain-bdp3/sources/botw/rust_bridge/target/release/botwcraft-rust-bridge.exe
+          if-no-files-found: error
+  minecraft-java:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Compile Minecraft client with F5 optical camera export
+        working-directory: fabric
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon --stacktrace build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BotwCraft-SkyCraft-Camera-Fabric
+          path: fabric/build/libs/*jar
+          if-no-files-found: error
