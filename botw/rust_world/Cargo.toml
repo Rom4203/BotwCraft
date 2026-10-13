@@ -1,0 +1,20 @@
+[package]
+name = "botwcraft-world-core"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[features]
+default = []
+gpu = ["dep:wgpu", "dep:bytemuck"]
+
+[dependencies]
+wgpu = { version = "27", default-features = false, features = ["vulkan", "dx12", "wgsl"], optional = true }
+bytemuck = { version = "1.23", features = ["derive"], optional = true }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+
+[lib]
+path = "src/lib.rs"

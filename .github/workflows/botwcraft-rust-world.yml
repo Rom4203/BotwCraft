@@ -1,0 +1,18 @@
+name: BotwCraft Rust GPU core
+on:
+  push:
+    paths:
+      - "botw/rust_world/**"
+      - ".github/workflows/botwcraft-rust-world.yml"
+  pull_request:
+    paths:
+      - "botw/rust_world/**"
+      - ".github/workflows/botwcraft-rust-world.yml"
+jobs:
+  world-core:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --manifest-path botw/rust_world/Cargo.toml
+      - run: cargo check --manifest-path botw/rust_world/Cargo.toml --features gpu
