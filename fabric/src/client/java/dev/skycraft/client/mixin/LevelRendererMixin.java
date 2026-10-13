@@ -20,7 +20,7 @@ public abstract class LevelRendererMixin {
 		cancellable = true
 	)
 	private void skycraft$skipLevel(CallbackInfo ci) {
-		if (SkyClient.hudCaptureActive() && !dev.skycraft.client.BlockPreview.enabled()) {
+		if (false && SkyClient.hudCaptureActive() && !dev.skycraft.client.BlockPreview.enabled()) {
 			ci.cancel();
 		}
 	}
