@@ -1,56 +1,148 @@
 from __future__ import annotations
-import os,sys,time
+import os
+import time
 from pathlib import Path
 
-def roots():
-    out=[]
-    for name in ["APPDATA","LOCALAPPDATA"]:
-        if os.getenv(name):out.append(Path(os.getenv(name))/"Ryujinx")
-    out.extend([Path(r"D:\\Jeux\\Emu\\ryujinx\\portable"),
-                Path(r"D:\\Jeux\\Emu\\ryujinx")])
-    return out
+# Read the combined BotwCraft launcher log FIRST. When launch.py starts
+# Ryujinx, the emulator stdout (including WiiXLaunch OutputDebugString)
+# is piped to BotwCraft/logs/botwcraft.log, NOT necessarily Ryujinx/Logs.
+ROOT = Path(__file__).resolve().parent
+GAME_ID = "01007ef00011e000"
 
-def latest():
-    out=[]
-    choices=roots()
-    active=[p for p in choices if (
-        p/"mods"/"contents"/"01007ef00011e000"/"BotwCraft"/
-        "romfs"/"WiiXLaunch"/"mods"/"bwc_pose.wxlm").is_file()]
-    if active: choices=active
-    for p in choices:
-        for d in (p/"Logs",p/"logs"):
-            if d.exists():
-                out.extend(x for x in d.glob("*.log") if x.is_file())
-    return max(out,key=lambda x:x.stat().st_mtime) if out else None
+
+def profiles():
+    result = []
+    for variable in ("APPDATA", "LOCALAPPDATA"):
+        value = os.getenv(variable)
+        if value:
+            result.append(Path(value) / "Ryujinx")
+    result += [Path("D:/Jeux/Emu/ryujinx/portable"),
+               Path("D:/Jeux/Emu/ryujinx")]
+    return result
+
+
+def candidates():
+    found = []
+    seen = set()
+
+    def add(p: Path):
+        try:
+            p = p.resolve()
+            if p.is_file() and p not in seen:
+                found.append(p)
+                seen.add(p)
+        except OSError:
+            pass
+
+    # Explicit input can be a log file or an extracted BotwCraft directory.
+    given = os.environ.get("BOTWCRAFT_LOG", "").strip().strip('"')
+    if given:
+        p = Path(given)
+        add(p if p.suffix.lower() == ".log" else p / "logs" / "botwcraft.log")
+
+    # If the diagnostic sits next to an extracted BotwCraft installation.
+    for root in (ROOT, ROOT.parent, ROOT.parent.parent):
+        for rel in ("logs/botwcraft.log", "BotwCraft/logs/botwcraft.log",
+                    "native/logs/botwcraft.log"):
+            add(root / rel)
+
+    # The user's known working BotwCraft location; bounded to nearby sessions.
+    home = Path("D:/Jeux/Emu/botwcraft")
+    if home.is_dir():
+        add(home / "logs" / "botwcraft.log")
+        for pattern in ("*/logs/botwcraft.log", "*/*/logs/botwcraft.log"):
+            for p in home.glob(pattern):
+                add(p)
+
+    # Ryujinx stores its own logs separately if launched without the bridge.
+    for p in profiles():
+        for dirname in ("Logs", "logs"):
+            d = p / dirname
+            if d.is_dir():
+                for log in d.glob("*.log"):
+                    add(log)
+
+    return found
+
+
+def latest_log():
+    all_logs = candidates()
+    # Prefer a currently active BotwCraft session. The same diagnostic line
+    # may otherwise exist in an older Ryujinx log and mislead the user.
+    if not all_logs:
+        return None
+    return max(all_logs, key=lambda f: f.stat().st_mtime)
+
+
+def read_latest_session(path: Path):
+    # Show the diagnostic even if it started before the monitor window.
+    data = path.read_bytes()[-2_000_000:]
+    marker = data.rfind(b"Rust native BOTW session")
+    if marker >= 0:
+        data = data[marker:]
+    return data.decode("utf-8", "replace")
+
 
 def main():
-    print("BOTWCRAFT : MONITEUR NVN - profondeur Zelda")
-    print("Lance normalement Zelda et Minecraft avec BotwCraft.")
-    print("Il faut entrer dans le monde (pas rester au menu).")
-    print("Le test ne modifie pas les textures ou les collisions.")
-    seen=set(); start=time.monotonic(); current=None; cursor=0; had=False
-    while time.monotonic()-start<180:
-        chosen=latest()
-        if chosen is not None:
-            if chosen!=current:
-                current=chosen; cursor=0
-                print("Ryujinx :",chosen)
-            try:
-                with chosen.open("rb") as f:
-                    f.seek(cursor)
-                    data=f.read(1024*1024);cursor=f.tell()
-                for row in data.decode("utf8","replace").splitlines():
-                    if "[DEPTH_PROBE]" not in row:continue
-                    had=True
-                    if row not in seen:
-                        print(row[-450:])
-                        seen.add(row)
-            except (OSError,ValueError):
-                pass
-        time.sleep(.4)
-    if not had:
-        print("Aucun message DEPTH_PROBE detecte dans les logs Ryujinx.")
-        print("Cela peut signifier que le module n'est pas charge ou que les logs sont ailleurs.")
-    print("Copie les lignes [DEPTH_PROBE] ou envoie le dernier log Ryujinx.")
+    print("BOTWCRAFT : VERIFICATION PROFONDEUR NATiVE NVN", flush=True)
+    print("Ce moniteur lit aussi le vrai logs/botwcraft.log de ton BotwCraft.", flush=True)
+    current = None
+    previous = ""
+    start = time.monotonic()
+    printed = set()
+    first_wait = True
+    count = 0
+    while time.monotonic() - start < 180:
+        log = latest_log()
+        if log is None:
+            if first_wait:
+                print("Aucun journal trouvé automatiquement.", flush=True)
+                print("Copie le chemin complet du fichier logs\\botwcraft.log :",
+                      flush=True)
+                path_text = input("> ").strip().strip('"')
+                first_wait = False
+                if path_text:
+                    os.environ["BOTWCRAFT_LOG"] = path_text
+            time.sleep(1)
+            continue
 
-if __name__=="__main__":main()
+        if current != log:
+            current = log
+            previous = ""
+            printed.clear()
+            print("\n[MONITEUR] Lecture du journal :", log, flush=True)
+
+        try:
+            content = read_latest_session(log)
+        except (OSError, ValueError):
+            time.sleep(.6)
+            continue
+
+        # This log is appended to by the standard BotwCraft Python launcher.
+        # Keep track of printed rows, including across the first read.
+        for line in content.splitlines():
+            if "[DEPTH_PROBE]" in line or (
+                "[loader:bwc_depth_probe] LOADED" in line
+            ):
+                if line not in printed:
+                    print(line[-550:], flush=True)
+                    printed.add(line)
+                    count += 1
+
+        if content != previous:
+            previous = content
+        elif count == 0 and time.monotonic() - start > 12 and first_wait:
+            first_wait = False
+            print("[MONITEUR] Aucun message DEPTH_PROBE pour cette session.",
+                  flush=True)
+            print("Le module peut être absent, ou son hook n'est pas exécuté.",
+                  flush=True)
+            print("Tu peux déjà m'envoyer ce logs\\botwcraft.log.", flush=True)
+        time.sleep(.7)
+
+    print("Surveillance terminée. Envoie-moi les lignes [DEPTH_PROBE],")
+    print("ou le fichier logs\\botwcraft.log si aucune n'apparaît.")
+
+
+if __name__ == "__main__":
+    main()
