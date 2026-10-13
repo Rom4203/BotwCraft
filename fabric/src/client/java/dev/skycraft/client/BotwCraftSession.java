@@ -75,6 +75,8 @@ public final class BotwCraftSession {
                 + "botwcraft.preview). Retire le mode preview et redemarre Minecraft.";
         }
         requested = true;
+        setHudEnabled(true);
+        setCompositorInputs(true);
         return "BotwCraft: connexion manuelle demandee. Mode lecture seule : "
             + "aucun TP, aucune modification du monde ou de la souris. "
             + "Tape /botwcraft status.";
