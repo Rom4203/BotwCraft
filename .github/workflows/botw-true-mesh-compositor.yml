@@ -1,0 +1,32 @@
+name: BotwCraft in-window real Minecraft triangles
+on:
+  push:
+    branches: [botwcraft/true-mesh-compositor-20261013]
+    paths:
+      - 'botw/integrated-compositor/**'
+      - 'botw/rust-scene-relay/**'
+      - '.github/workflows/botw-true-mesh-compositor.yml'
+  workflow_dispatch:
+jobs:
+  windows-compositor:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: botw/integrated-compositor
+      - name: Test the real Minecraft mesh scene transport
+        run: cargo test --manifest-path botw/rust-scene-relay/Cargo.toml
+      - name: Build WGPU Vulkan/DX12 integrated compositor
+        run: cargo build --release --manifest-path botw/integrated-compositor/Cargo.toml
+      - name: Validate built compositor
+        shell: pwsh
+        run: |
+          if (-not (Test-Path botw/integrated-compositor/target/release/botwcraft-compositor.exe)) {exit 2}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BotwCraft-Integrated-Real-Mesh-Windows
+          path: botw/integrated-compositor/target/release/botwcraft-compositor.exe
+          if-no-files-found: error
