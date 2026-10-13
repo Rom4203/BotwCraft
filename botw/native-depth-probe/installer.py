@@ -1,5 +1,5 @@
 from __future__ import annotations
-import os, subprocess, shutil, sys
+import os, subprocess, shutil, sys, struct
 from pathlib import Path
 
 TITLE="01007EF00011E000"
@@ -43,6 +43,11 @@ def main():
         raise RuntimeError("Installe d'abord ton BotwCraft habituel, module bwc_pose introuvable : "+str(stable))
     file=ROOT/PROBE
     if not file.is_file():raise RuntimeError("Module compile absent : "+str(file))
+    expected=file.read_bytes()
+    if not (expected[:4]==b"MLXW" and expected[12:27]==b"bwc_depth_probe"):
+        raise RuntimeError("Paquet compile invalide (en-tete WiiXLaunch incorrect)")
+    expected_crc=struct.unpack_from("<I",expected,40)[0]
+    print("[VERIF] Module du ZIP :",len(expected),"octets ; CRC attendu dans Ryujinx : 0x%08X"%expected_crc)
     print("Profil :",base)
     print("Module additionnel :",path)
     print("AUCUN module BotwCraft, Minecraft ou subsdk9 existant n'est remplace.")
@@ -58,7 +63,13 @@ def main():
             print("[MAJ] Ancienne sonde diagnostique remplacee :",dst)
         dst.parent.mkdir(parents=True,exist_ok=True)
         shutil.copy2(file,dst)
-    print("[OK] Diagnostic de profondeur installe.")
+    for dst in (path,sd):
+        if not dst.is_file() or dst.read_bytes()!=expected:
+            raise RuntimeError("Verification installation impossible : "+str(dst))
+    print("[OK] Nouveau diagnostic installe et verifie.")
+    print("[VERIF] Dans logs/botwcraft.log, repere :")
+    print("        [loader:bwc_depth_probe] integrity OK (crc32 0x%08X"%expected_crc)
+    print("       Si tu lis un autre CRC, Ryujinx charge encore une ancienne sonde.")
     print("Lance ton BotwCraft habituel. Si Ryujinx plante, ferme-le puis relance")
     print("INSTALLER_COMPLET.bat et choisis la desactivation.")
 if __name__=="__main__":
