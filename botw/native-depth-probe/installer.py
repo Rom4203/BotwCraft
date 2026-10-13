@@ -29,19 +29,18 @@ def main():
     p=subprocess.run(["tasklist","/FI","IMAGENAME eq Ryujinx.exe","/NH"],capture_output=True,text=True)
     if "ryujinx.exe" in p.stdout.lower():raise RuntimeError("Ferme Ryujinx avant l'installation")
     base=profile()
-    stable=base/"mods"/"contents"/TITLE.lower()/"BotwCraft"/"romfs"/"WiiXLaunch"/"mods"/"bwc_pose.wxlm"
-    # Windows is case-insensitive, so TITLE.lower() matches the stock installer.
-    if not stable.is_file():
-        raise RuntimeError("Installe d'abord ton BotwCraft habituel, module bwc_pose introuvable : "+str(stable))
-    # A separate Ryujinx content mod: no modification to the user's working BotwCraft.
+    # A separate Ryujinx content mod: do not change the working BotwCraft.
     mod=base/"mods"/"contents"/TITLE/MOD_NAME
     path=mod/"romfs"/"WiiXLaunch"/"mods"/PROBE
     sd=base/"sdcard"/"WiiXLaunch"/"mods"/TITLE/PROBE
     if len(sys.argv)>1 and sys.argv[1]=="--disable":
         path.unlink(missing_ok=True)
         sd.unlink(missing_ok=True)
-        print("[OK] Diagnostic desac tive ; installation BotwCraft conservee")
+        print("[OK] Diagnostic desactive ; installation BotwCraft conservee")
         return
+    stable=base/"mods"/"contents"/TITLE.lower()/"BotwCraft"/"romfs"/"WiiXLaunch"/"mods"/"bwc_pose.wxlm"
+    if not stable.is_file():
+        raise RuntimeError("Installe d'abord ton BotwCraft habituel, module bwc_pose introuvable : "+str(stable))
     file=ROOT/PROBE
     if not file.is_file():raise RuntimeError("Module compile absent : "+str(file))
     print("Profil :",base)
