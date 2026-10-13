@@ -159,35 +159,27 @@ impl Map {
         let beat=self.u64(0x18);
         let now=unsafe{GetTickCount64()};
         if beat==0 || now<beat || now-beat>3000{return None;}
-        let ms=0x200usize;
-        for _ in 0..4 {
-            let seq=self.u32(ms);
-            if seq&1!=0 {continue;}
-            let flags=self.u32(ms+4);
-            let feet=[self.f64(ms+8),self.f64(ms+16),self.f64(ms+24)];
-            let yaw=self.f32(ms+32);
-            let pitch=self.f32(ms+36);
-            let eyeheight=self.f32(ms+40);
-            let fov=self.f32(ms+64);
-            let eye=[self.f64(ms+80),self.f64(ms+88),self.f64(ms+96)];
-            if self.u32(ms)!=seq {continue;}
-            if !feet.iter().all(|v|v.is_finite()&&v.abs()<100_000.0)
-               || !yaw.is_finite() || !pitch.is_finite() {return None;}
-            let has_eye=eye.iter().all(|v|v.is_finite()&&v.abs()<100_000.0)
-                && eye.iter().zip(feet).map(|(a,b)|(a-b)*(a-b)).sum::<f64>()<25.0;
-            let coords=if has_eye {
-                [eye[0] as f32,eye[1] as f32,eye[2] as f32]
-            } else {
-                [feet[0] as f32,
-                 (feet[1]+if (0.3..3.5).contains(&eyeheight){eyeheight as f64}else{1.62}) as f32,
-                 feet[2] as f32]
-            };
-            return Some(McCamera {
-                xyz:coords,yaw,pitch,
-                fov:if fov.is_finite()&&(15.0..=145.0).contains(&fov){fov}else{70.0},
-                ready:(flags&0x20000)!=0 && (flags&1)!=0,
-                gui_open:(flags&0x10000)==0,
-            })
+        // Dedicated Java-rendered camera, NEVER read McState player POV.
+        // Source is Zelda Link pose until native Zelda camera is available.
+        // The flag intentionally records that pose != verified optical camera.
+        let base=0x900usize;
+        if self.u32(base)!=0x324D4342 || self.u32(base+4)!=2{return None;}
+        for _ in 0..8 {
+            let seq=self.u32(base+8);
+            if seq&1!=0{continue;}
+            let flags=self.u32(base+12);
+            let eye=[self.f64(base+16),self.f64(base+24),self.f64(base+32)];
+            let yaw=self.f32(base+40);
+            let pitch=self.f32(base+44);
+            let fov=self.f32(base+48);
+            if self.u32(base+8)!=seq{continue;}
+            if flags&1==0 || !eye.iter().all(|x|x.is_finite()&&x.abs()<100_000.0)
+                || !yaw.is_finite() || !pitch.is_finite()
+                || !fov.is_finite() || !(25.0..=130.0).contains(&fov) {return None;}
+            return Some(McCamera{
+                xyz:[eye[0] as f32,eye[1] as f32,eye[2] as f32],
+                yaw,pitch,fov,ready:true,gui_open:flags&8!=0,
+            });
         }
         None
     }
