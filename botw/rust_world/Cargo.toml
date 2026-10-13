@@ -9,7 +9,7 @@ default = []
 gpu = ["dep:wgpu", "dep:bytemuck"]
 
 [dependencies]
-wgpu = { version = "27", default-features = false, features = ["vulkan", "dx12"], optional = true }
+wgpu = { version = "27", default-features = false, features = ["vulkan", "dx12", "wgsl"], optional = true }
 bytemuck = { version = "1.23", features = ["derive"], optional = true }
 
 [profile.release]
