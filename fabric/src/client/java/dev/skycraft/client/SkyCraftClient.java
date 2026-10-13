@@ -30,7 +30,7 @@ public final class SkyCraftClient implements ClientModInitializer {
 					c.getSource().sendFeedback(net.minecraft.network.chat.Component.literal(BotwCraftSession.status()));
 					return 1;
 				}))
-				;
+				);
 		});
 		// Multiplayer without editing files: the host opens their world to LAN (O, Open to LAN) and
 		// e4mc gives them a link; friends type /join <link> in chat, and /leave to come back.
