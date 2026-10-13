@@ -21,24 +21,25 @@ use wgpu::util::DeviceExt;
 use bytemuck::Zeroable;
 use winit::{
     application::ApplicationHandler,
-    dpi::{PhysicalPosition,PhysicalSize},
+    dpi::PhysicalSize,
     event::WindowEvent,
     event_loop::{ActiveEventLoop,ControlFlow,EventLoop},
     window::{Window,WindowAttributes,WindowId},
 };
 use windows_sys::Win32::{
     Foundation::{BOOL,HWND,LPARAM,POINT,RECT},
+    Graphics::Gdi::ClientToScreen,
     UI::WindowsAndMessaging::{
-        EnumWindows,GetClientRect,ClientToScreen,GetForegroundWindow,
+        EnumWindows,GetClientRect,GetForegroundWindow,
         GetWindowTextLengthW,GetWindowTextW,IsWindowVisible,IsIconic,
         ShowWindow,SetWindowPos,GetWindowLongPtrW,SetWindowLongPtrW,
         GWL_EXSTYLE,SW_HIDE,SW_SHOWNOACTIVATE,SWP_NOACTIVATE,SWP_SHOWWINDOW,
-        SWP_NOZORDER,HWND_TOPMOST,WS_EX_TRANSPARENT,WS_EX_TOOLWINDOW,
+        HWND_TOPMOST,WS_EX_TRANSPARENT,WS_EX_TOOLWINDOW,
         WS_EX_NOACTIVATE,WS_EX_LAYERED,
     }
 };
 use botwcraft_rust_scene_relay::{
-    Scene,Vertex, RENDER_RING,RING_DATA, MAP_BYTES,MAGIC,VERSION
+    Scene,RENDER_RING,RING_DATA, MAP_BYTES,MAGIC,VERSION
 };
 
 #[link(name="kernel32")]
@@ -483,7 +484,7 @@ impl Gpu {
             let mut pass=encoder.begin_render_pass(&wgpu::RenderPassDescriptor{
                 label:Some("Minecraft blocks - transparent 3D layer"),
                 color_attachments:&[Some(wgpu::RenderPassColorAttachment{
-                    view:&view,resolve_target:None,ops:wgpu::Operations {
+                    view:&view,resolve_target:None,depth_slice:None,ops:wgpu::Operations {
                         load:wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),store:wgpu::StoreOp::Store
                     }
                 })],
@@ -527,7 +528,7 @@ fn target(mine:HWND)->Option<WindowTarget>{
     unsafe {
         EnumWindows(Some(enum_window),(&mut finder as *mut Finder) as LPARAM);
         if finder.found.is_null() || GetForegroundWindow()!=finder.found{return None;}
-        let mut rect=RECT::default();let mut pt=POINT::default();
+        let mut rect:RECT=mem::zeroed();let mut pt:POINT=mem::zeroed();
         if GetClientRect(finder.found,&mut rect)==0{return None;}
         if ClientToScreen(finder.found,&mut pt)==0{return None;}
         let w=(rect.right-rect.left).max(0) as u32;
