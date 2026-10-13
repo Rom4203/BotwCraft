@@ -18,6 +18,7 @@ use std::{
 };
 use raw_window_handle::{HasWindowHandle,RawWindowHandle};
 use wgpu::util::DeviceExt;
+use bytemuck::Zeroable;
 use winit::{
     application::ApplicationHandler,
     dpi::{PhysicalPosition,PhysicalSize},
@@ -598,12 +599,15 @@ impl ApplicationHandler for App{
             WindowEvent::Resized(s)=>{
                 if let Some(gpu)=&mut self.gpu{gpu.resize(s.width,s.height);}
             }
-            WindowEvent::RedrawRequested=>self.redraw(),
             _=>{}
         }
     }
-    fn about_to_wait(&mut self,_event_loop:&ActiveEventLoop){
-        if let Some(window)=&self.window{window.request_redraw();}
+    fn about_to_wait(&mut self,event_loop:&ActiveEventLoop){
+        // WM_PAINT does not fire for hidden windows: poll shared memory on
+        // the explicit 16-ms clock so the GPU overlay can become visible.
+        self.redraw();
+        event_loop.set_control_flow(ControlFlow::WaitUntil(
+            Instant::now()+Duration::from_millis(16)));
     }
 }
 impl App{
