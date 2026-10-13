@@ -20,8 +20,15 @@ jobs:
           git clone --depth=1 https://github.com/BladesawStudios/WiiXLaunch.git vendor/WiiXLaunch
           python3 vendor/WiiXLaunch/sdk/scripts/build_mod.py --source botw/native-depth-probe --target switch --wiixlaunch vendor/WiiXLaunch/sdk --out build-native-depth
           test -s build-native-depth/switch-mods/bwc_depth_probe.wxlm
+      - name: Package independent diagnostic with exactly two bat launchers
+        run: cp build-native-depth/switch-mods/bwc_depth_probe.wxlm botw/native-depth-probe/bwc_depth_probe.wxlm
       - uses: actions/upload-artifact@v4
         with:
-          name: BotwCraft-EXPERIMENTAL-native-depth-only
-          path: build-native-depth/switch-mods/bwc_depth_probe.wxlm
+          name: BotwCraft-Depth-Zelda-NVN-Test
+          path: |
+            botw/native-depth-probe/INSTALLER_COMPLET.bat
+            botw/native-depth-probe/START_BOTWCRAFT.bat
+            botw/native-depth-probe/installer.py
+            botw/native-depth-probe/monitor.py
+            botw/native-depth-probe/bwc_depth_probe.wxlm
           if-no-files-found: error
