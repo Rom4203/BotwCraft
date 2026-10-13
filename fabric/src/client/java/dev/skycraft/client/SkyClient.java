@@ -108,6 +108,25 @@ public final class SkyClient {
             : minecraft.options.fov().get().floatValue();
         if (!Float.isFinite(fov)) fov = 70.0F;
         mcState.fov = Math.max(30.0F, Math.min(130.0F, fov));
+
+        // SkyCraft camera parity: publish Minecraft's REAL render-camera
+        // position, not a reconstructed Link/player eye. In F5, that camera
+        // can be several blocks behind the player or in front of them.
+        // All values belong to the same interpolated render frame as feet.
+        mcState.flags &= ~0x40000; // clear camera-valid flag until verified
+        Vec3 renderEye = camera.position();
+        if (renderEye != null
+            && Double.isFinite(renderEye.x)
+            && Double.isFinite(renderEye.y)
+            && Double.isFinite(renderEye.z)
+            && renderEye.distanceToSqr(feet) <= 1024.0D) {
+            mcState.eyeX = renderEye.x;
+            mcState.eyeY = renderEye.y;
+            mcState.eyeZ = renderEye.z;
+            mcState.cameraMode = minecraft.options.getCameraType().ordinal();
+            mcState.cameraDistance = (float) renderEye.distanceTo(player.getEyePosition(partial));
+            mcState.flags |= 0x40000; // the Rust bridge must check this bit
+        }
         SkyLink.writeMcState(mcState);
         // Camera for imported Minecraft geometry is authored here in Java
         // from Zelda telemetry. Rust MUST NOT read Minecraft's player POV.
