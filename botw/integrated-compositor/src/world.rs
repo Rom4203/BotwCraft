@@ -50,32 +50,35 @@ impl Map {
    }
  }
  fn camera(&self)->Option<Camera>{
+   const B:usize=0x980;
    let now=unsafe{GetTickCount64()};
-   let beat=self.u64(0x18);
-   if beat==0 || now<beat || now-beat>2000{return None;}
-   for _ in 0..5 {
-     let seq=self.u32(MC);
-     if seq&1!=0{continue;}
-     let flags=self.u32(MC+4);
-     if flags&1==0{return None;}
-     let player=[self.f64(MC+8),self.f64(MC+16),self.f64(MC+24)];
-     let yaw=self.f32(MC+32);let pitch=self.f32(MC+36);
-     let fov=self.f32(MC+64);
-     let mode=self.u32(MC+0xC0);
-     let optical=[self.f64(MC+0x50),self.f64(MC+0x58),self.f64(MC+0x60)];
-     let verified=flags&CAM_VALID!=0 && mode<=2 && optical.iter().chain(&player)
-       .all(|n|n.is_finite()&&n.abs()<100000.)
-       && (0..3).map(|i|(optical[i]-player[i]).powi(2)).sum::<f64>()<1024.;
-     if self.u32(MC)!=seq {continue;}
-     if !player.iter().all(|n|n.is_finite()&&n.abs()<100000.)||!yaw.is_finite()||!pitch.is_finite(){return None;}
-     let mut angle=yaw;
-     let mut slope=pitch;
-     if verified && mode==2 {angle+=180.;slope=-slope;}
-     let eye=if verified {optical} else {[player[0],player[1]+1.62,player[2]]};
-     return Some(Camera{eye:eye.map(|v|v as f32),angle,slope,
-       fov:if (25.0..=130.0).contains(&fov){fov}else{70.}});
-   }
-   None
+   let seq=self.u32(B+4);
+   if seq==0 || seq&1!=0 || self.u32(B)!=0x31575642 {return None;}
+   let stamp=self.u64(B+8);
+   if stamp==0 || now<stamp || now-stamp>200{return None;}
+   if self.u32(B+20)&1==0 {return None;}
+   let eye=[self.f32(B+24),self.f32(B+28),self.f32(B+32)];
+   let forward=[self.f32(B+36),self.f32(B+40),self.f32(B+44)];
+   let mut view=[0f32;12];
+   for (i,v) in view.iter_mut().enumerate(){*v=self.f32(B+48+i*4);}
+   let mc_origin=[self.f32(B+96),self.f32(B+100),self.f32(B+104)];
+   let zelda_origin=[self.f32(B+108),self.f32(B+112),self.f32(B+116)];
+   // Never use MC yaw, pitch, FOV or virtual third-person camera here.
+   if self.u32(B+4)!=seq{return None;}
+   if !eye.iter().chain(&forward).chain(&view).chain(&mc_origin)
+     .chain(&zelda_origin).all(|f|f.is_finite()&&f.abs()<100_000.){return None;}
+   let shift=std::array::from_fn(|i|zelda_origin[i]-mc_origin[i]);
+   // Mat34's third row usually points backwards (OpenGL right-handed).
+   // Determine the game-native sign, not Minecraft's look angles.
+   let alignment=view[8]*forward[0]+view[9]*forward[1]+view[10]*forward[2];
+   if alignment.abs()<0.5||alignment.abs()>1.5 {return None;}
+   let depth_sign=alignment.signum();
+   // Verify the native view really transforms the native camera's eye to zero.
+   let camera_space: [f32;3]=std::array::from_fn(|r|{
+     view[r*4]*eye[0]+view[r*4+1]*eye[1]+view[r*4+2]*eye[2]+view[r*4+3]
+   });
+   if camera_space.iter().any(|c|c.abs()>2.) {return None;}
+   Some(Camera{view,shift,depth_sign})
  }
  /// Consume bounded complete packets. Exactly one consumer advances the tail.
  /// Renderer never reads stale or unpublished data.
@@ -114,26 +117,28 @@ impl Map {
  }
 }
 #[derive(Clone,Copy)]
-struct Camera{eye:[f32;3],angle:f32,slope:f32,fov:f32}
+struct Camera{view:[f32;12],shift:[f32;3],depth_sign:f32}
 #[repr(C)]
 #[derive(Clone,Copy,bytemuck::Pod,bytemuck::Zeroable)]
 struct GpuVertex{xyz:[f32;3],uv:[f32;2],tint:u32,light:u32,flags:u32}
 const _:()=assert!(mem::size_of::<GpuVertex>()==32);
 #[repr(C)]
 #[derive(Clone,Copy,bytemuck::Pod,bytemuck::Zeroable)]
-struct CameraUniform{eye:[f32;4],right:[f32;4],up:[f32;4],forward:[f32;4],lens:[f32;4]}
+struct CameraUniform{
+ offset:[f32;4], right:[f32;4], up:[f32;4], forward:[f32;4],lens:[f32;4],
+}
 fn uniform(cam:Camera)->CameraUniform{
- let (sy,cy)=cam.angle.to_radians().sin_cos();
- let (sp,cp)=cam.slope.to_radians().sin_cos();
- // Minecraft: yaw 0 looks +Z, positive pitch down.
- let forward=[-sy*cp,-sp,cy*cp,0.];
- let right=[cy,0.,sy,0.];
- let up=[-sy*sp,cp,cy*sp,0.];
- let cot=1./(cam.fov.to_radians()*0.5).tan();
+ // Zelda controls the VIEW. Its optical projection is still opaque to the
+ // WiiXLaunch API, so use a fixed 70 degree baseline, NEVER Minecraft's FOV.
+ // This calibration remains approximate until Ryujinx exposes P/depth.
+ const ZELDA_VERTICAL_FOV:f32=70.0;
+ let cot=1./(ZELDA_VERTICAL_FOV.to_radians()*0.5).tan();
  CameraUniform{
-   eye:[cam.eye[0],cam.eye[1],cam.eye[2],0.],
-   right,up,forward,
-   lens:[cot,WIDTH as f32/HEIGHT as f32,0.05,1024.],
+   offset:[cam.shift[0],cam.shift[1],cam.shift[2],0.],
+   right:cam.view[0..4].try_into().unwrap(),
+   up:cam.view[4..8].try_into().unwrap(),
+   forward:cam.view[8..12].try_into().unwrap(),
+   lens:[cot,WIDTH as f32/HEIGHT as f32,cam.depth_sign,0.05],
  }
 }
 #[derive(Clone)]
@@ -173,7 +178,15 @@ impl Layer {
    // No active MC camera -> don't render ghost blocks over the Zelda menu.
    let (mesh_changed,atlas_changed)=map.drain(&mut self.scene);
    if mesh_changed{
-     let eye=snap.cam.map_or([0.;3],|c|c.eye);
+     // Culling stays relative to the actual MC player, not Zelda's absolute
+     // origin. The current native view carries the world-to-Hyrule offset.
+     let eye=if let Some(cam)=snap.cam {
+       // Approximate MC-space eye from world anchor and native viewpoint.
+       // No Minecraft optical camera or FOV enters the projection.
+       let view=cam.view;let shift=cam.shift;
+       let x=-view[3];let y=-view[7];let z=-view[11];
+       [x-shift[0],y-shift[1],z-shift[2]]
+     }else{[0.;3]};
      let mut sections:Vec<_>=self.scene.sections.iter().filter_map(|(pos,vertices)|{
        let origin=[pos.0 as f32*16.,pos.1 as f32*16.,pos.2 as f32*16.];
        let d=(0..3).map(|i|(origin[i]+8.-eye[i]).powi(2)).sum::<f32>();
@@ -345,15 +358,13 @@ impl Gpu {
 #[cfg(test)]
 mod tests {
  use super::*;
- #[test]fn minecraft_camera_orthonormal(){
-   for yaw in [0.,30.,90.,180.,270.]{
-     for pitch in [-60.,0.,50.]{
-       let m=uniform(Camera{eye:[0.;3],angle:yaw,slope:pitch,fov:70.});
-       let d=|a:[f32;4],b:[f32;4]|a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
-       assert!(d(m.right,m.up).abs()<0.0001);
-       assert!(d(m.forward,m.up).abs()<0.0001);
-       assert!(d(m.forward,m.right).abs()<0.0001);
-     }
-   }
+ #[test]fn native_zeldaview_is_unaffected_by_minecraft_fov(){
+   let cam=Camera{view:[1.,0.,0.,-11.,0.,1.,0.,-21.,0.,0.,1.,-31.],
+     shift:[100.,200.,300.],depth_sign:1.};
+   let u=uniform(cam);
+   assert_eq!(u.right,[1.,0.,0.,-11.]);
+   assert_eq!(u.up,[0.,1.,0.,-21.]);
+   assert_eq!(u.offset,[100.,200.,300.,0.]);
+   assert!((u.lens[0]-1.4281).abs()<0.001);
  }
 }
