@@ -12,7 +12,12 @@ def roots():
 
 def latest():
     out=[]
-    for p in roots():
+    choices=roots()
+    active=[p for p in choices if (
+        p/"mods"/"contents"/"01007ef00011e000"/"BotwCraft"/
+        "romfs"/"WiiXLaunch"/"mods"/"bwc_pose.wxlm").is_file()]
+    if active: choices=active
+    for p in choices:
         for d in (p/"Logs",p/"logs"):
             if d.exists():
                 out.extend(x for x in d.glob("*.log") if x.is_file())
