@@ -3,9 +3,9 @@
 // This captures actual nvnCommandBufferSetRenderTargets attachments in memory;
 // it NEVER draws a triangle or substitutes a private depth buffer.
 //
-// The hook only installs after a debugger deliberately writes 0x314D5241
-// ("ARM1") at the advertised guest mailbox + 4. Default: passive.
-// Needs in-game validation before any world-renderer integration.
+// This standalone diagnostic is armed only if the user explicitly installs
+// bwc_depth_probe.wxlm in Ryujinx. It is NEVER included in the stable package.
+// This is not the final renderer; it needs validation before integration.
 #include <cstdint>
 #include <cstddef>
 #include <wiixlaunch/mod_runtime.h>
@@ -33,7 +33,7 @@ namespace {
 
  struct alignas(16) Stats {
    uint32_t magic;
-   volatile uint32_t arm; // change only deliberately via GDB after module loaded
+   volatile uint32_t arm; // armed only by explicitly installing this separate module
    volatile uint32_t status;
    volatile uint32_t all_calls;
    volatile uint32_t depth_calls;
@@ -49,7 +49,7 @@ namespace {
    volatile uint32_t display_frame;
  };
  extern "C" __attribute__((used,aligned(16))) Stats g_NvnDepthProbe{
-   kMagic,0,kIdle,0,0,0,0,0,0,0,0,0,0,0,0
+   kMagic,kArm,kIdle,0,0,0,0,0,0,0,0,0,0,0,0
  };
  using BindTargetsFn=void(*)(void*,int,const void* const*,const void*,
                              const void*,const void*);
@@ -146,7 +146,7 @@ namespace {
 }
 extern "C" __attribute__((used)) void WiiXLaunch_ModEntry(){
   if(!Core::Log)return;
-  Core::Log("[DEPTH_PROBE] Experimental NDP1 native depth diagnosis; DISARMED by default");
+  Core::Log("[DEPTH_PROBE] Experimental NDP1 native depth diagnosis; enabled ONLY in explicitly-installed test module");
   printAddr("[DEPTH_PROBE] NDP1_MAILBOX_ADDR=",reinterpret_cast<uintptr_t>(&g_NvnDepthProbe));
   if(Core::RegisterTick) Core::RegisterTick(&Tick);
   if(Gfx::RegisterDraw) Gfx::RegisterDraw(&ObserveScanout);
