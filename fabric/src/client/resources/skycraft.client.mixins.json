@@ -13,6 +13,7 @@
     "IntegratedServerMixin",
     "LevelExtractorMixin",
     "LevelRendererMixin",
+    "BotwGuiLayerMixin",
     "MinecraftDigMixin",
     "MinecraftMixin",
     "RenderSetupAccessor",
