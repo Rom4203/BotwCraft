@@ -69,6 +69,8 @@ namespace {
                              const void*,const void*);
  static BindTargetsFn s_original=nullptr;
  static bool s_attempted=false;
+ static uint32_t s_attempts=0;
+ static uint32_t s_lastAttempt=0;
  static uint32_t s_ticks=0;
  static uint32_t s_lastDepthCount=0;
  static uint32_t s_lastPrinted=0;
@@ -215,8 +217,13 @@ namespace {
      // attachment identity, lifetime, viewport and command-buffer ownership.
    }
    if(s_attempted || g_NvnDepthProbe.arm!=kArm)return;
-   s_attempted=true;
+   // The NVN function table may not be initialized on the first world tick.
+   // Retry only a handful of times; never hook an unresolved GPU function.
+   if(s_lastAttempt && tick-s_lastAttempt<30u)return;
+   s_lastAttempt=tick;
+   if(++s_attempts>20u) {s_attempted=true;g_NvnDepthProbe.status=kRefused;return;}
    if(!Call::ResolveTarget || !Core::InstallHook){
+     s_attempted=true;
      g_NvnDepthProbe.status=kNotSupported;
      if(Core::Log)Core::Log("[DEPTH_PROBE] NVN hook capabilities unavailable; leaving game unchanged");
      return;
@@ -224,17 +231,12 @@ namespace {
    // WiiXLaunch/wiixlaunch-botw/nvn.hpp reads this GOT entry with two
    // indirections. It is NOT a game camera offset.
    uintptr_t got=Call::ResolveTarget(kNvnSetRenderTargetsGot,0u);
-   if(got<0x10000u || (got&7u)){
-     g_NvnDepthProbe.status=kRefused;return;
-   }
+   if(got<0x10000u || (got&7u))return;
    uintptr_t cell=*reinterpret_cast<const volatile uintptr_t*>(got);
-   if(cell<0x10000u || (cell&7u)){
-     g_NvnDepthProbe.status=kRefused;return;
-   }
+   if(cell<0x10000u || (cell&7u))return;
    uintptr_t fn=*reinterpret_cast<const volatile uintptr_t*>(cell);
-   if(fn<0x10000u || (fn&3u)){
-     g_NvnDepthProbe.status=kRefused;return;
-   }
+   if(fn<0x10000u || (fn&3u))return;
+   s_attempted=true;
    uintptr_t original=Core::InstallHook(fn,reinterpret_cast<uintptr_t>(&ObserveRenderTargets));
    if(!original){
      g_NvnDepthProbe.status=kRefused;
