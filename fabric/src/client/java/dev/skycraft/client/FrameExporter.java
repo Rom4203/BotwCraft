@@ -40,9 +40,12 @@ public final class FrameExporter {
 	}
 
 	public static void capture(Minecraft minecraft) {
-		shipReadyFrames();
+		capture(minecraft.gameRenderer.mainRenderTarget());
+	}
 
-		RenderTarget target = minecraft.gameRenderer.mainRenderTarget();
+	/** Capture a specific isolated GPU target, never inspect the composed frame. */
+	public static void capture(RenderTarget target) {
+		shipReadyFrames();
 		GpuTexture color = target.getColorTexture();
 		if (color == null) {
 			return;
