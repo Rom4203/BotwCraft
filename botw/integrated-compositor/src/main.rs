@@ -2,6 +2,8 @@
 mod capture;
 mod hud;
 mod viewport;
+#[cfg(target_os="windows")]
+mod world;
 
 use capture::{FrameInbox, PixelFrame};
 use eframe::egui;
@@ -11,6 +13,8 @@ use std::time::{Duration, Instant};
 struct BotwCraftApp {
     latest_capture: Arc<Mutex<Option<PixelFrame>>>,
     hud_map: Option<hud::SharedHud>,
+    #[cfg(target_os="windows")]
+    world:world::Layer,
     game_texture: Option<egui::TextureHandle>,
     hud_texture: Option<egui::TextureHandle>,
     game_size: (usize, usize),
@@ -165,6 +169,9 @@ impl eframe::App for BotwCraftApp {
             self.last_hud_upload=Instant::now();
         }
 
+        #[cfg(target_os="windows")]
+        self.world.tick();
+
         if ctx.input(|i| i.key_pressed(egui::Key::F10)) { self.only_game=!self.only_game; }
         if ctx.input(|i| i.key_pressed(egui::Key::F7)) { self.crop_top=self.crop_top.saturating_sub(4); }
         if ctx.input(|i| i.key_pressed(egui::Key::F8)) { self.crop_top=(self.crop_top+4).min(200); }
@@ -184,6 +191,11 @@ impl eframe::App for BotwCraftApp {
                     let screen=viewport::fit(area,crop.width,crop.height);
                     self.last_view=Some(screen);
                     ui.painter().image(game.id(),screen,crop.uv,egui::Color32::WHITE);
+                    // Three independent layers in one GPU frame: Zelda -> real
+                    // Minecraft triangle/atlas renderer -> transparent HUD.
+                    // World depth is hardware-tested; Zelda depth is still external.
+                    #[cfg(target_os="windows")]
+                    self.world.schedule(ui.painter(),screen);
                     if let Some(hud)=&self.hud_texture {
                         let full_uv=egui::Rect::from_min_max(egui::pos2(0.0,0.0),egui::pos2(1.0,1.0));
                         ui.painter().image(hud.id(),screen,full_uv,egui::Color32::WHITE);
@@ -245,6 +257,7 @@ fn main() -> eframe::Result {
         let _ = repaint_ctx.set(cc.egui_ctx.clone());
         Ok(Box::new(BotwCraftApp {
         latest_capture,hud_map:None,game_texture:None,hud_texture:None,
+        world:world::Layer::new(cc),
         game_size:(1280,720),hud_size:(0,0),
         last_reconnect:Instant::now()-Duration::from_secs(2),
         last_hud_upload:Instant::now()-Duration::from_secs(1),
