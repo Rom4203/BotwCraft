@@ -25,6 +25,23 @@ jobs:
           name: BotwCraft-SkyCraft-Camera-Rust
           path: botw/rust-terrain-bdp3/sources/botw/rust_bridge/target/release/botwcraft-rust-bridge.exe
           if-no-files-found: error
+  zelda-native-camera:
+    runs-on: ubuntu-latest
+    container: devkitpro/devkita64:latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch WiiXLaunch native mod SDK
+        run: git clone --depth=1 https://github.com/BladesawStudios/WiiXLaunch.git vendor/WiiXLaunch
+      - name: Build modified BOTW 1.5.0 guest with real optical-camera capture
+        run: |
+          python3 vendor/WiiXLaunch/sdk/scripts/build_mod.py --source botw/rust-terrain-bdp3/sources/botw/wxlm --target switch --wiixlaunch vendor/WiiXLaunch/sdk --out build-optical
+          test -s build-optical/switch-mods/bwc_pose.wxlm
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BotwCraft-Zelda-Native-Optical-View
+          path: build-optical/switch-mods/bwc_pose.wxlm
+          if-no-files-found: error
   minecraft-java:
     runs-on: ubuntu-latest
     timeout-minutes: 35
