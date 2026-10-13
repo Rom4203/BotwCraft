@@ -25,6 +25,9 @@ windows-sys = { version = "0.59", features = [
   "Win32_System_SystemInformation",
 ] }
 
+[dev-dependencies]
+naga = { version = "27", features = ["wgsl-in"] }
+
 [profile.release]
 lto = "thin"
 codegen-units = 1
