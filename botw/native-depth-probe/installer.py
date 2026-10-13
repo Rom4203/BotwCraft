@@ -49,8 +49,13 @@ def main():
     if input("Installer le diagnostic experimental ? (O/N) : ").strip().lower()!="o":
         print("Annule");return
     for dst in (path,sd):
+        # Users may already have our older NDP1 probe. Upgrade only a known
+        # WiiXLaunch module with the exact bwc_depth_probe identity.
         if dst.exists() and dst.read_bytes()!=file.read_bytes():
-            raise RuntimeError("Un autre module diagnostique existe deja : "+str(dst))
+            old=dst.read_bytes()
+            if not (old.startswith(b"MLXW") and old[12:27]==b"bwc_depth_probe"):
+                raise RuntimeError("Refus de remplacer un module inconnu : "+str(dst))
+            print("[MAJ] Ancienne sonde diagnostique remplacee :",dst)
         dst.parent.mkdir(parents=True,exist_ok=True)
         shutil.copy2(file,dst)
     print("[OK] Diagnostic de profondeur installe.")
