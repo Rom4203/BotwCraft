@@ -13,6 +13,8 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+      - name: Validate isolated Windows installer and log monitor syntax
+        run: python3 -m py_compile botw/native-depth-probe/installer.py botw/native-depth-probe/monitor.py
       - name: Build isolated Switch native depth observation module
         run: |
           git clone --depth=1 https://github.com/BladesawStudios/WiiXLaunch.git vendor/WiiXLaunch
