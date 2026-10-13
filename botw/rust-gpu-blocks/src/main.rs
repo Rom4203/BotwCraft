@@ -1,4 +1,3 @@
-#![cfg_attr(windows, windows_subsystem = "windows")]
 // True WGPU 3D rendering of SkyCraft Minecraft section meshes/atlas.
 // Not a replacement for native Zelda occlusion (BOTW depth is unavailable).
 #[cfg(not(windows))]
@@ -90,7 +89,7 @@ impl McCamera {
         let forward=[-sy*cp,-sp,cy*cp,0.0];
         let right=[cy,0.0,sy,0.0];
         // Cross(forward,right); independently derived, orthonormal.
-        let up=[-sp*sy,cp,-sp*cy,0.0];
+        let up=[-sp*sy,cp,sp*cy,0.0];
         let aspect=w.max(1) as f32/h.max(1) as f32;
         let fy=1.0/(self.fov.clamp(15.0,145.0).to_radians()*0.5).tan();
         CameraUniform{
@@ -109,6 +108,10 @@ mod tests {
         assert_eq!(u.forward,[0.,0.,1.,0.]);
         assert_eq!(u.right,[1.,0.,0.,0.]);
         assert_eq!(u.up,[0.,1.,0.,0.]);
+        let tilted=McCamera{pitch:30.0,ready:true,gui_open:false,..McCamera::default()}.uniform(1920,1080);
+        let dot=tilted.up.iter().zip(tilted.forward).map(|(u,f)|u*f).sum::<f32>();
+        assert!(dot.abs()<0.0001,"camera up must be orthogonal to direction");
+        assert!(tilted.up[2]>0.0,"look-down camera up vector points toward +Z");
         assert!((u.lens[1]-16.0/9.0).abs()<0.0001);
     }
 }
