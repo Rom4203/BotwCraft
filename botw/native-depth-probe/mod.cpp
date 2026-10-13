@@ -74,6 +74,8 @@ namespace {
  static uint32_t s_ticks=0;
  static uint32_t s_lastDepthCount=0;
  static uint32_t s_lastPrinted=0;
+ static bool s_firstScanout=false;
+ static bool s_firstTick=false;
  // WiiXLaunch modules are freestanding ARM64 (no sprintf). Keep logs bounded.
  static void appendNumber(char*& dest,uint32_t v){
     char tmp[12];unsigned n=0;
@@ -189,6 +191,10 @@ namespace {
 
  static void ObserveScanout(uintptr_t cmd,uintptr_t texture,int32_t width,int32_t height) {
    if(!cmd || !texture || width<=0 || height<=0)return;
+   if(!s_firstScanout){
+     s_firstScanout=true;
+     if(Core::Log)Core::Log("[DEPTH_PROBE] DRAW_CALLBACK_ACTIVE (real Zelda frame observed)");
+   }
    auto& s=g_NvnDepthProbe;
    __atomic_add_fetch(&s.draw_callbacks,1u,__ATOMIC_RELAXED);
    __atomic_store_n(&s.display_color,texture,__ATOMIC_RELAXED);
@@ -209,19 +215,35 @@ namespace {
 
  static void Tick(){
    const uint32_t tick=__atomic_add_fetch(&s_ticks,1u,__ATOMIC_RELEASE);
-   if(tick-s_lastPrinted>=300u && g_NvnDepthProbe.status==kHookInstalled){
+   if(!s_firstTick){
+      s_firstTick=true;
+      if(Core::Log)Core::Log("[DEPTH_PROBE] TICK_CALLBACK_ACTIVE (gameplay started)");
+   }
+   if(tick-s_lastPrinted>=180u){
      s_lastPrinted=tick;
-     report();
-     // Depth attachment is a pointer observed during frame submission.
-     // NEVER treat it as a safe drawable scene depth until Ryujinx confirms
-     // attachment identity, lifetime, viewport and command-buffer ownership.
+     if(g_NvnDepthProbe.status==kHookInstalled)report();
+     else if(Core::Log){
+       char msg[145]{};char* p=msg;
+       const char* title="[DEPTH_PROBE] status=";
+       while(*title)*p++=*title++;
+       appendNumber(p,g_NvnDepthProbe.status);
+       const char* attempt=" attempts=";while(*attempt)*p++=*attempt++;
+       appendNumber(p,s_attempts);
+       const char* draws=" drawCalls=";while(*draws)*p++=*draws++;
+       appendNumber(p,g_NvnDepthProbe.draw_callbacks);
+       *p=0;Core::Log(msg);
+     }
    }
    if(s_attempted || g_NvnDepthProbe.arm!=kArm)return;
    // The NVN function table may not be initialized on the first world tick.
    // Retry only a handful of times; never hook an unresolved GPU function.
    if(s_lastAttempt && tick-s_lastAttempt<30u)return;
    s_lastAttempt=tick;
-   if(++s_attempts>20u) {s_attempted=true;g_NvnDepthProbe.status=kRefused;return;}
+   if(++s_attempts>20u) {
+     s_attempted=true;g_NvnDepthProbe.status=kRefused;
+     if(Core::Log)Core::Log("[DEPTH_PROBE] NVN function-table lookup unavailable after 20 retries; no GPU hook installed");
+     return;
+   }
    if(!Call::ResolveTarget || !Core::InstallHook){
      s_attempted=true;
      g_NvnDepthProbe.status=kNotSupported;
@@ -231,11 +253,20 @@ namespace {
    // WiiXLaunch/wiixlaunch-botw/nvn.hpp reads this GOT entry with two
    // indirections. It is NOT a game camera offset.
    uintptr_t got=Call::ResolveTarget(kNvnSetRenderTargetsGot,0u);
-   if(got<0x10000u || (got&7u))return;
+   if(got<0x10000u || (got&7u)){
+     if(s_attempts==1u && Core::Log)Core::Log("[DEPTH_PROBE] NVN GOT not initialized yet");
+     return;
+   }
    uintptr_t cell=*reinterpret_cast<const volatile uintptr_t*>(got);
-   if(cell<0x10000u || (cell&7u))return;
+   if(cell<0x10000u || (cell&7u)){
+     if(s_attempts==1u && Core::Log)Core::Log("[DEPTH_PROBE] NVN GOT cell invalid");
+     return;
+   }
    uintptr_t fn=*reinterpret_cast<const volatile uintptr_t*>(cell);
-   if(fn<0x10000u || (fn&3u))return;
+   if(fn<0x10000u || (fn&3u)){
+     if(s_attempts==1u && Core::Log)Core::Log("[DEPTH_PROBE] NVN target pointer invalid");
+     return;
+   }
    s_attempted=true;
    uintptr_t original=Core::InstallHook(fn,reinterpret_cast<uintptr_t>(&ObserveRenderTargets));
    if(!original){
