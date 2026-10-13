@@ -246,7 +246,7 @@ mod camera_math_tests {
     pose(Some(([13.46,23.62,30.],1))),[100.,200.,300.]);
   assert_eq!(eye,[103.46,203.62,300.]);
   near(yaw,90.);near(pitch,30.);
-  assert!(forward[0]<-0.8);
+  assert!(forward[0] < -0.8);
  }
  #[test]fn f5_front_reverses_yaw_and_pitch_like_skycraft(){
   let (_,forward,yaw,pitch)=view_for(
