@@ -120,13 +120,9 @@ public final class SkyClient {
             }
         }
 
-        // Original SkyCraft GPU asynchronous HUD readback and RGBA triple
-        // buffer publication. No fabricated HUD, and no input interception.
-        // Do not export the full Minecraft scene into the HUD texture:
-        // LevelRendererMixin explicitly skips it ONLY in this HUD mode.
-        if (hudCaptureActive()) {
-            FrameExporter.capture(minecraft);
-        }
+        // GUI-only GPU capture is performed inside BotwGuiLayerMixin when
+        // GuiRenderer renders to an isolated transparent target. NEVER
+        // capture mainRenderTarget: it contains the Zelda-corrupting MC sky.
     }
 
     /** Never tie Minecraft FPS to Zelda's game/render thread. */
