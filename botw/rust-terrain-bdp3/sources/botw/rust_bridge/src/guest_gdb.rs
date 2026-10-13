@@ -208,6 +208,9 @@ pub fn transport_loop(state:Arc<Mutex<Engine>>){
    let mut last_report=Instant::now()-Duration::from_secs(5);
    let mut last_read=Instant::now()-Duration::from_secs(1);
    let mut last_tx=Instant::now()-Duration::from_secs(1);
+   let mut last_optical_read=Instant::now()-Duration::from_secs(1);
+   let mut optical_seq=0u32;
+   let mut optical_reported=false;
    let mut last_pose:Option<[u8;POSE_BYTES]>=None;
    let mut latency_sum=0u128;
    let mut latency_count=0u64;
@@ -286,6 +289,39 @@ pub fn transport_loop(state:Arc<Mutex<Engine>>){
        authenticated=false;
        last_pose=None;
        println!("[RUST_LINK] Disarmed once. Read-only until active input.");
+    }
+    // Zelda optical VIEW captured AFTER sead::LookAtCamera::doUpdateMatrix.
+    // Use the EXISTING GDB connection: never start another debugger client.
+    if armed && authenticated && last_optical_read.elapsed()>=Duration::from_millis(40) {
+      if let Ok(view)=remote.read(addr+4084,84){
+        let magic=u32::from_le_bytes(view[0..4].try_into().unwrap());
+        let seq=u32::from_le_bytes(view[4..8].try_into().unwrap());
+        let game_tick=u32::from_le_bytes(view[8..12].try_into().unwrap());
+        let valid=magic==0x31575642 && seq!=0 && seq&1==0 && game_tick!=0 &&
+          view[12..84].chunks_exact(4).all(|x| {
+            let f=f32::from_le_bytes(x.try_into().unwrap());
+            f.is_finite() && f.abs()<100000.0
+          });
+        if valid {
+          if let Ok(mut engine)=state.lock(){
+            let base=0x980usize; // reserved SkyCraft-v11 shared memory header
+            optical_seq=optical_seq.wrapping_add(2)&!1;
+            engine.mem.sequence_begin(base+4,optical_seq);
+            engine.mem.u32_set(base,0x31575642); // BVW1
+            engine.mem.u64_set(base+8,crate::shared::clock());
+            engine.mem.u32_set(base+16,game_tick);
+            engine.mem.u32_set(base+20,1);
+            engine.mem.write(base+24,&view[12..84]); // eye + forward + native view
+            engine.mem.write(base+96,&pose[76..100]); // 3 MC + 3 BOTW anchors
+            engine.mem.sequence_end(base+4,optical_seq);
+            if !optical_reported {
+              println!("[RUST_LINK] Native Zelda optical view BVW1 ready; Minecraft FOV never used for blocks");
+              optical_reported=true;
+            }
+          }
+        }
+      }
+      last_optical_read=Instant::now();
     }
     // Static physical mesh bypass: stop spending Havok CPU on raycasts when
     // the exact user-owned collision file is already present on disk.
