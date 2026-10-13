@@ -1,7 +1,7 @@
 // The actual Minecraft section mesh, not a rendered screen-space screenshot.
 // One world-to-view perspective for ALL blocks; hardware clips and z-tests.
 struct Camera {
- eye:vec4<f32>,right:vec4<f32>,up:vec4<f32>,
+ offset:vec4<f32>,right:vec4<f32>,up:vec4<f32>,
  forward:vec4<f32>,lens:vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> camera:Camera;
@@ -18,12 +18,14 @@ struct Out {
 };
 @vertex
 fn vs_main(v:Input)->Out{
- let relative=v.xyz-camera.eye.xyz;
- let x=dot(relative,camera.right.xyz);
- let y=dot(relative,camera.up.xyz);
- let z=dot(relative,camera.forward.xyz);
- let near=camera.lens.z;
- let far=camera.lens.w;
+ // Exact MC->Hyrule world translation, THEN the Zelda native view matrix.
+ // Never calculate view from Minecraft's eye/yaw/pitch.
+ let hyrule=vec4<f32>(v.xyz+camera.offset.xyz,1.0);
+ let x=dot(hyrule,camera.right);
+ let y=dot(hyrule,camera.up);
+ let z=dot(hyrule,camera.forward)*camera.lens.z;
+ let near=camera.lens.w;
+ let far=1024.0;
  let depth_a=far/(far-near);
  var out:Out;
  out.pos=vec4<f32>(x*camera.lens.x/camera.lens.y,y*camera.lens.x,
