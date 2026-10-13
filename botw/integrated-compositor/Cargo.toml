@@ -1,0 +1,18 @@
+[package]
+name = "botwcraft-compositor"
+version = "0.1.0"
+edition = "2024"
+description = "Independent Rust GPU window compositing Ryujinx output and SkyCraft v11 Minecraft HUD"
+publish = false
+
+[dependencies]
+eframe = { version = "0.33", default-features = false, features = ["wgpu", "default_fonts"] }
+# When eframe disables defaults, wgpu must explicitly include Windows backends.
+# Cargo features are additive: these backends enable the wgpu 27 renderer.
+wgpu = { version = "27", default-features = false, features = ["vulkan", "dx12"] }
+windows-capture = "2.0.1"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+
