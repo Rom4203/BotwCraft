@@ -31,6 +31,12 @@ namespace {
  constexpr uintptr_t kNvnSetRenderTargetsGot = 0x2597598u;
  enum : uint32_t {kIdle=0,kHookInstalled=1,kRefused=2,kNotSupported=3};
 
+ struct DepthEntry{
+   volatile uintptr_t depth;
+   volatile uint32_t count;
+   volatile uint32_t lastFrame;
+   volatile uintptr_t companionColor;
+ };
  struct alignas(16) Stats {
    uint32_t magic;
    volatile uint32_t arm; // armed only by explicitly installing this separate module
@@ -54,6 +60,7 @@ namespace {
    volatile uint32_t same_depth_reuse;
    volatile uintptr_t previous_depth;
    volatile uintptr_t last_scanout_depth;
+   DepthEntry candidates[16];
  };
  extern "C" __attribute__((used,aligned(16))) Stats g_NvnDepthProbe{
    kMagic,kArm,kIdle
@@ -71,6 +78,12 @@ namespace {
     do {tmp[n++]=char('0'+v%10);v/=10;}while(v&&n<sizeof(tmp));
     while(n)*dest++=tmp[--n];
  }
+ static void appendHex(char*& dest,uintptr_t val){
+   *dest++='0';*dest++='x';
+   for(int shift=int(sizeof(uintptr_t)*8)-4;shift>=0;shift-=4){
+      *dest++="0123456789abcdef"[(val>>shift)&15u];
+   }
+ }
  static void report(){
     char line[250]{};char* out=line;
     auto lit=[&out](const char* p){while(*p)*out++=*p++;};
@@ -83,6 +96,27 @@ namespace {
     lit(" reusedDepth=");appendNumber(out,s.same_depth_reuse);
     lit(" depthChanges=");appendNumber(out,s.candidate_changes);
     *out=0;if(Core::Log)Core::Log(line);
+    // Most frequently rebound NVN depth texture. This is evidence only;
+    // NOT proof it is an attached opaque-world buffer at scanout time.
+    uint32_t best=0;uintptr_t bestDepth=0, bestColor=0;
+    for(unsigned i=0;i<16u;i++){
+       const auto& c=s.candidates[i];
+       const auto count=__atomic_load_n(&c.count,__ATOMIC_ACQUIRE);
+       if(count>best){
+          best=count;
+          bestDepth=__atomic_load_n(&c.depth,__ATOMIC_ACQUIRE);
+          bestColor=__atomic_load_n(&c.companionColor,__ATOMIC_ACQUIRE);
+       }
+    }
+    if(bestDepth && Core::Log){
+       char detail[140]{};char* p=detail;
+       auto word=[&p](const char* q){while(*q)*p++=*q++;};
+       word("[DEPTH_PROBE] popularDepth=");
+       appendHex(p,bestDepth);
+       word(" color=");appendHex(p,bestColor);
+       word(" calls=");appendNumber(p,best);
+       *p=0;Core::Log(detail);
+    }
  }
 
  static void printAddr(const char* label,uintptr_t addr){
@@ -117,7 +151,27 @@ namespace {
        __atomic_store_n(&s.candidate_depth,newDepth,__ATOMIC_RELAXED);
        __atomic_store_n(&s.candidate_color,reinterpret_cast<uintptr_t>(color0),__ATOMIC_RELAXED);
        __atomic_store_n(&s.candidate_cmd,reinterpret_cast<uintptr_t>(cmd),__ATOMIC_RELAXED);
-       __atomic_store_n(&s.candidate_frame,s_ticks,__ATOMIC_RELAXED);
+       const uint32_t tick=__atomic_load_n(&s_ticks,__ATOMIC_RELAXED);
+       __atomic_store_n(&s.candidate_frame,tick,__ATOMIC_RELAXED);
+       // Fixed 16-slot bounded texture histogram, with nonblocking CAS
+       // so observation never performs dynamic allocations or logging in NVN.
+       for(auto& entry:s.candidates){
+          uintptr_t old=__atomic_load_n(&entry.depth,__ATOMIC_ACQUIRE);
+          if(!old){
+              uintptr_t zero=0;
+              if(__atomic_compare_exchange_n(&entry.depth,&zero,newDepth,false,
+                                              __ATOMIC_ACQ_REL,__ATOMIC_ACQUIRE))
+                  old=newDepth;
+              else old=zero;
+          }
+          if(old==newDepth){
+              __atomic_fetch_add(&entry.count,1u,__ATOMIC_RELAXED);
+              __atomic_store_n(&entry.lastFrame,tick,__ATOMIC_RELAXED);
+              __atomic_store_n(&entry.companionColor,
+                              reinterpret_cast<uintptr_t>(color0),__ATOMIC_RELEASE);
+              break;
+          }
+       }
      }
    }
    // Hook can run on a distinct NVN thread immediately after patching.
