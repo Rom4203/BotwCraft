@@ -1,0 +1,48 @@
+name: BotwCraft restore stable compositor source
+on:
+  push:
+    branches: [botwcraft/integrated-render-20261013]
+    paths: ['.github/workflows/restore-botwcraft-renderer.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  restore-sources:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - name: Recover exact compositor source from verified original payload
+        run: |
+          python -m pip install --disable-pip-version-check brotli
+          python - <<'PY'
+          import pathlib,base64,hashlib,brotli
+          payload=pathlib.Path('botw/lowlatency_payload.b64').read_text().strip()
+          assert len(payload)==10664
+          compressed=base64.b64decode(payload,validate=True)
+          assert hashlib.sha256(compressed).hexdigest()=='9e80fc9b7e885b6d1fd4385a6da2a7fce6cd6e535bd742749f45bf8fe348d940'
+          data=brotli.decompress(compressed)
+          o=0;names=[]
+          while o<len(data):
+              n=int.from_bytes(data[o:o+2],'little');o+=2
+              name=data[o:o+n].decode();o+=n
+              size=int.from_bytes(data[o:o+4],'little');o+=4
+              content=data[o:o+size];o+=size
+              assert name in ('Cargo.toml','src/main.rs','src/capture.rs','src/hud.rs','src/viewport.rs')
+              dest=pathlib.Path('botw/integrated-compositor')/name
+              dest.parent.mkdir(parents=True,exist_ok=True)
+              dest.write_bytes(content)
+              names.append(name)
+          assert len(names)==5 and o==len(data)
+          print(names)
+          PY
+      - name: Commit exact source to development branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add botw/integrated-compositor
+          if ! git diff --staged --quiet; then
+            git commit -m "Recover byte-identical working compositor sources"
+            git push
+          fi
