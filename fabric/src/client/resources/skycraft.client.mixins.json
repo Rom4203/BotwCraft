@@ -12,7 +12,6 @@
     "InputConstantsMixin",
     "IntegratedServerMixin",
     "LevelExtractorMixin",
-    "LevelRendererMixin",
     "MinecraftDigMixin",
     "MinecraftMixin",
     "RenderSetupAccessor",
@@ -26,5 +25,7 @@
     "WindowMixin",
     "WorldOpenFlowsMixin"
   ],
-  "injectors": { "defaultRequire": 1 }
+  "injectors": {
+    "defaultRequire": 1
+  }
 }
