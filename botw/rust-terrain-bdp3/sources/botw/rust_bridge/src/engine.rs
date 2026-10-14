@@ -11,6 +11,11 @@ const STALE:u64=1000;
 // Keep test20 FPS freeze recovery: avoid repeated BDP disarm in 1-FPS stalls.
 const MC_STALE:u64=6000;
 const MAX_TELEPORT:f64=128.0;
+// One-time world registration, not a per-frame camera offset.
+fn locked_hyrule_position(world:[f64;3],mc_anchor:[f64;3],hyrule_anchor:[f64;3])->[f64;3]{
+ std::array::from_fn(|i|hyrule_anchor[i]+world[i]-mc_anchor[i])
+}
+
 
 #[derive(Clone,Copy)]
 struct McPose{
@@ -138,7 +143,8 @@ impl Engine{
   let mut enabled=false;
   if let Some(m)=mc{
    if m.flags&INPUTS==0{
-    self.reset_anchor();
+    // Input loss is not a world relocation. Keep the immutable anchor
+    // while chat, inventory, focus or the input bridge are temporarily off.
    }else // Third Rust gameplay window holds focus; Minecraft client FPS GUI may be off.
    if (m.flags&(ACTIVE|INPUTS))==(ACTIVE|INPUTS){
     if let Some(p)=game{
@@ -150,7 +156,7 @@ impl Engine{
      if teleport{self.reset_anchor();}
      else if let (Some(ma),Some(ga))=(self.mc_anchor,self.botw_anchor){
       self.last_mc=Some(m);
-      let pos=[ga[0]+m.pos[0]-ma[0],ga[1]+m.pos[1]-ma[1],ga[2]+m.pos[2]-ma[2]];
+      let pos=locked_hyrule_position(m.pos,ma,ga);
       let (eye,forward,render_yaw,render_pitch)=view_for(m,pos);
       // The player stays at the same feet position. ONLY Zelda's real
       // render camera follows Minecraft's camera in F5 and first person.
