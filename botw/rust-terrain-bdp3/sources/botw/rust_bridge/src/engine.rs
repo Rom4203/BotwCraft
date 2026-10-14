@@ -260,6 +260,29 @@ mod camera_math_tests {
   near(yaw,270.);near(pitch,-30.);
   assert!(forward[0]>0.8);
  }
+ #[test]fn world_origin_never_follows_the_camera_or_menus(){
+   // Same two fixed anchors survive an arbitrary amount of camera/player
+   // movement and a temporary user interface interruption.
+   let minecraft_origin=[128.,64.,-256.];
+   let hyrule_origin=[-942.,127.,1398.];
+   let stationary_block=[130.,65.,-258.];
+   let expected=locked_hyrule_position(stationary_block,minecraft_origin,hyrule_origin);
+   assert_eq!(expected,[-940.,128.,1396.]);
+   for camera_eye in [[130.,65.,-257.],[140.,66.,-230.],[120.,65.,-250.]] {
+     let actual=locked_hyrule_position(stationary_block,minecraft_origin,hyrule_origin);
+     assert_eq!(actual,expected,"placed blocks must remain at Hyrule world coords");
+     assert_ne!(camera_eye,actual);
+   }
+ }
+ #[test]fn world_registration_is_not_reset_for_temporary_input_loss(){
+   let source=include_str!("engine.rs");
+   // Code review regression: this specific broken behavior must never
+   // appear again in the native bridge.
+   let guard=source.split("if m.flags&INPUTS==0{").nth(1).unwrap()
+       .split("}else").next().unwrap();
+   assert!(!guard.contains("self.reset_anchor()"),
+     "Disabling controls while chat/menu opens must not move the world");
+ }
  #[test]fn missing_camera_telemetry_falls_back_safely(){
   let (eye,_,_,_)=view_for(pose(None),[100.,200.,300.]);
   near(eye[0],100.);near(eye[1],201.62);near(eye[2],300.);
