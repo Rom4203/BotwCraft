@@ -104,7 +104,7 @@ impl SharedHud {
             }
         }
         self.latest_id = id;
-        Some(PixelFrame { width: w, height: h, data })
+        Some(PixelFrame { width: w, height: h, data, captured_ms: 0 })
     }
     /// Writes SkyCraft v11's actual IN_KEY/IN_MOUSE/IN_CURSOR input ring.
     /// One writer (this compositor), one reader (Fabric's InputBridge).
