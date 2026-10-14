@@ -143,21 +143,22 @@ public final class MirrorWorld {
 				new net.minecraft.client.multiplayer.ServerData("SkyCraft", join, net.minecraft.client.multiplayer.ServerData.Type.OTHER), false, null);
 			return;
 		}
-		if (minecraft.getLevelSource().levelExists(SkyCraft.WORLD_NAME)) {
+		String worldName = BlockPreview.enabled() ? "BotwCraftPreview" : SkyCraft.WORLD_NAME;
+		if (minecraft.getLevelSource().levelExists(worldName)) {
 			SkyCraft.LOG.info("SkyCraft: opening mirror world");
-			minecraft.createWorldOpenFlows().openWorld(SkyCraft.WORLD_NAME, () -> minecraft.gui.setScreen(title));
+			minecraft.createWorldOpenFlows().openWorld(worldName, () -> minecraft.gui.setScreen(title));
 			return;
 		}
 		SkyCraft.LOG.info("SkyCraft: creating mirror world");
 		LevelSettings settings = new LevelSettings(
-			SkyCraft.WORLD_NAME,
-			GameType.SURVIVAL,
+			worldName,
+			BlockPreview.enabled() ? GameType.CREATIVE : GameType.SURVIVAL,
 			new LevelSettings.DifficultySettings(Difficulty.NORMAL, false, false),
 			true,
 			WorldDataConfiguration.DEFAULT
 		);
 		minecraft.createWorldOpenFlows().createFreshLevel(
-			SkyCraft.WORLD_NAME,
+			worldName,
 			settings,
 			new WorldOptions(0L, false, false),
 			registries -> registries.lookupOrThrow(Registries.WORLD_PRESET).getOrThrow(PRESET).value().createWorldDimensions(),

@@ -90,6 +90,11 @@ public final class SkyLink {
 		return tickCount() - beat < HEARTBEAT_TIMEOUT_MS;
 	}
 
+	/** Shared-memory bridge mapped, even if Zelda is loading or has exited. */
+	public static boolean transportOpen() {
+		return shm != null;
+	}
+
 	/** Bumps whenever a (new) Skyrim instance is on the other end: everything Skyrim caches must be resent. */
 	public static int generation() {
 		return generation;
@@ -103,6 +108,15 @@ public final class SkyLink {
 	/** The mapping if it has been opened (whether or not Skyrim is still alive). */
 	public static MemorySegment segment() {
 		return shm;
+	}
+
+	/** Tell the host that manual Minecraft linkage was disabled, without unmapping. */
+	public static void stopHeartbeat() {
+		MemorySegment seg = shm;
+		if (seg != null) {
+			LONG.setRelease(seg, OFF_HEADER + H_MC_HEARTBEAT, 0L);
+			seg.set(JAVA_INT, OFF_HEADER + H_MC_PID, 0);
+		}
 	}
 
 	/** Try to open the mapping at most once a second. Call regularly from the render thread. */

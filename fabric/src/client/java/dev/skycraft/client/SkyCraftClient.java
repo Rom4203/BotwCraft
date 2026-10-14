@@ -9,9 +9,50 @@ import net.minecraft.client.renderer.entity.NoopRenderer;
 public final class SkyCraftClient implements ClientModInitializer {
 	@Override
 	public void onInitializeClient() {
-		dev.skycraft.link.SkyLink.announceRunning();
+		// Manual BotwCraft: opening Minecraft must not auto-connect or advertise a linked process.
 		DiscordPresence.start();
-		DestructionToggle.register();
+		// BOTW terrain destruction is deferred; do not display a misleading
+		// legacy 'Skyrim destruction' toggle in Minecraft's pause menu.
+		// The user explicitly controls BotwCraft; no launcher, Java flags or
+		// automatic world loading before a real game telemetry stream exists.
+		net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback.EVENT.register((dispatcher, context) -> {
+			var root = net.fabricmc.fabric.api.client.command.v2.ClientCommands.literal("botwcraft");
+			dispatcher.register(root
+				.then(net.fabricmc.fabric.api.client.command.v2.ClientCommands.literal("connect").executes(c -> {
+					c.getSource().sendFeedback(net.minecraft.network.chat.Component.literal(BotwCraftSession.connect()));
+					return 1;
+				}))
+				.then(net.fabricmc.fabric.api.client.command.v2.ClientCommands.literal("disconnect").executes(c -> {
+					c.getSource().sendFeedback(net.minecraft.network.chat.Component.literal(BotwCraftSession.disconnect()));
+					return 1;
+				}))
+				.then(net.fabricmc.fabric.api.client.command.v2.ClientCommands.literal("status").executes(c -> {
+					c.getSource().sendFeedback(net.minecraft.network.chat.Component.literal(BotwCraftSession.status()));
+					return 1;
+				}))
+				.then(net.fabricmc.fabric.api.client.command.v2.ClientCommands.literal("inputs")
+                    .then(net.fabricmc.fabric.api.client.command.v2.ClientCommands.literal("on").executes(c -> {
+                        c.getSource().sendFeedback(net.minecraft.network.chat.Component.literal(BotwCraftSession.setCompositorInputs(true)));
+                        return 1;
+                    }))
+                    .then(net.fabricmc.fabric.api.client.command.v2.ClientCommands.literal("off").executes(c -> {
+                        c.getSource().sendFeedback(net.minecraft.network.chat.Component.literal(BotwCraftSession.setCompositorInputs(false)));
+                        return 1;
+                    })))
+                .then(net.fabricmc.fabric.api.client.command.v2.ClientCommands.literal("hud")
+					.then(net.fabricmc.fabric.api.client.command.v2.ClientCommands.literal("on").executes(c -> {
+						c.getSource().sendFeedback(net.minecraft.network.chat.Component.literal(BotwCraftSession.setHudEnabled(true)));
+						return 1;
+					}))
+					.then(net.fabricmc.fabric.api.client.command.v2.ClientCommands.literal("off").executes(c -> {
+						c.getSource().sendFeedback(net.minecraft.network.chat.Component.literal(BotwCraftSession.setHudEnabled(false)));
+						return 1;
+					}))
+					.then(net.fabricmc.fabric.api.client.command.v2.ClientCommands.literal("status").executes(c -> {
+						c.getSource().sendFeedback(net.minecraft.network.chat.Component.literal(BotwCraftSession.hudStatus()));
+						return 1;
+					}))));
+		});
 		// Multiplayer without editing files: the host opens their world to LAN (O, Open to LAN) and
 		// e4mc gives them a link; friends type /join <link> in chat, and /leave to come back.
 		net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback.EVENT.register((dispatcher, context) -> {
