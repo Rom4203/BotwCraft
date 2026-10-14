@@ -27,7 +27,7 @@ jobs:
         run: .\gradlew.bat build --no-daemon --stacktrace
       - name: Refuse missing Fabric mixins or Skyrim-only binary
         shell: pwsh
-        run: python ..\\botw\\scripts\\validate_botwcraft_mod.py
+        run: python ..\\botw\\scripts\\validate_botwcraft_mod.py build/libs/skycraft-0.1.2.jar
       - name: Publish experimental Fabric JAR
         uses: actions/upload-artifact@v4
         with:
