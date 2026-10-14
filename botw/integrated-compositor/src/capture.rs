@@ -12,11 +12,18 @@ use windows_capture::settings::{
 };
 use windows_capture::window::Window;
 
+#[link(name="kernel32")]
+unsafe extern "system" { fn GetTickCount64() -> u64; }
+pub fn windows_time_ms() -> u64 { unsafe { GetTickCount64() } }
+
 #[derive(Clone)]
 pub struct PixelFrame {
     pub width: usize,
     pub height: usize,
     pub data: Vec<u8>,
+    // Timestamp of the Zelda image. The Minecraft 3D layer must NEVER
+    // update its camera independently of this frame.
+    pub captured_ms: u64,
 }
 
 #[derive(Clone)]
@@ -47,6 +54,8 @@ impl GraphicsCaptureApiHandler for Capture {
             return Ok(());
         }
         self.last_frame = Instant::now();
+        // Host monotonic clock shared with the Zelda BVW1 optical mailbox.
+        let captured_ms = windows_time_ms();
         let width = frame.width() as usize;
         let height = frame.height() as usize;
         if width == 0 || height == 0 || width > 3840 || height > 2160 {
@@ -66,7 +75,7 @@ impl GraphicsCaptureApiHandler for Capture {
         // newer WGC frame was already captured. Replace pending frame with
         // the *newest*, using a short mutex only after GPU readback ends.
         if let Ok(mut latest) = self.inbox.latest.lock() {
-            *latest=Some(PixelFrame { width, height, data });
+            *latest=Some(PixelFrame { width, height, data, captured_ms });
         }
         // Guaranteed thread-safe egui request_repaint from capture thread.
         if let Some(ctx) = self.inbox.wake.get() { ctx.request_repaint(); }
