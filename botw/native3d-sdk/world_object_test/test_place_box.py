@@ -29,7 +29,7 @@ class Tests(unittest.TestCase):
   mod=self.base/"test_world_actor"
   file,hid=build(self.romfs,(3452.,226.,2142.),mod,"wood")
   self.assertTrue(file.exists())
-  self.assertEqual(file.relative_to(mod).as_posix(),
+  self.assertEqual(file.relative_to(mod.resolve()).as_posix(),
      "romfs/Map/MainField/I-7/I-7_Dynamic.smubin")
   self.assertEqual(self.map.read_bytes(),self.orig_bytes)
   root=oead.byml.from_binary(oead.yaz0.decompress(file.read_bytes()))
