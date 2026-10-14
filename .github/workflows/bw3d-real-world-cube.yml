@@ -20,3 +20,12 @@ jobs:
       - name: Test real Hyrule XYZ, actor ID, map compression and preservation
         working-directory: botw/native3d-sdk/world_object_test
         run: python -m unittest -v test_place_box.py
+      - name: Publish real-world Hyrule cube tester, without any Nintendo assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: BW3D-CUBE-PHYSIQUE-HYRULE-TEST
+          path: |
+            botw/native3d-sdk/world_object_test/place_box.py
+            botw/native3d-sdk/world_object_test/TEST_CUBE_DANS_ZELDA.bat
+            botw/native3d-sdk/world_object_test/RETIRER_TEST_CUBE.bat
+          if-no-files-found: error
