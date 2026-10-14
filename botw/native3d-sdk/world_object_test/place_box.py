@@ -69,7 +69,7 @@ def dist_to_map(objects, x, z):
     # A map tile may contain a few decorative props spanning its border.
     def distance(p,values):
         return 0.0 if values[0] <= p <= values[-1] else min(abs(p-values[0]),abs(p-values[-1]))
-    distance=math.hypot(dist(x,xs),dist(z,zs))
+    distance=math.hypot(distance(x,xs),distance(z,zs))
     midx=xs[len(xs)//2]
     midz=zs[len(zs)//2]
     return distance,math.hypot(x-midx,z-midz)
