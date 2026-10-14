@@ -1,0 +1,29 @@
+name: BOTW native 3D API - independent Switch module
+on:
+  push:
+    branches: [botwcraft/native3d-sdk-20261014]
+    paths:
+      - 'botw/native3d-sdk/**'
+      - '.github/workflows/botw-native3d-api.yml'
+  workflow_dispatch:
+jobs:
+  native-probe:
+    runs-on: ubuntu-latest
+    container: devkitpro/devkita64:latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download WiiXLaunch module SDK
+        run: git clone --depth=1 https://github.com/BladesawStudios/WiiXLaunch.git vendor/WiiXLaunch
+      - name: Build independent NX150 NVN depth and world coordinate probe
+        run: |
+          python3 vendor/WiiXLaunch/sdk/scripts/build_mod.py \
+            --source botw/native3d-sdk/native/demo \
+            --target switch \
+            --wiixlaunch vendor/WiiXLaunch/sdk \
+            --out build-native3d
+          test -s build-native3d/switch-mods/bw3d_api_probe.wxlm
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BW3D-Native-3D-API-NVN-Probe
+          path: build-native3d/switch-mods/bw3d_api_probe.wxlm
+          if-no-files-found: error
