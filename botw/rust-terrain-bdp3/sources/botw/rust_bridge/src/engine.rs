@@ -14,7 +14,35 @@ const MAX_TELEPORT:f64=128.0;
 
 #[derive(Clone,Copy)]
 struct McPose{
- frame:u64,pos:[f64;3],yaw:f32,pitch:f32,flags:u32,eye:f32,fov:f32
+ frame:u64,pos:[f64;3],yaw:f32,pitch:f32,flags:u32,eye:f32,fov:f32,
+ // Actual Minecraft render eye for this frame; F5 can move it off-player.
+ // Read only after the Fabric producer sets CAM_VALID.
+ camera:Option<([f64;3],u32)>
+}
+const CAM_VALID:u32=0x40000;
+
+/// Camera math follows SkyCraft's Game.cpp:
+/// one common render eye, yaw+180 and inverted pitch in F5 front,
+/// and exactly the observed Minecraft camera distance in F5 rear.
+/// No smoothing or interpolated guesses across unrelated frames.
+fn view_for(m:McPose,botw_feet:[f64;3])->([f64;3],[f64;3],f64,f64){
+ let mut yaw=m.yaw as f64;
+ let mut pitch=m.pitch as f64;
+ let camera=if let Some((eye,mode))=m.camera {
+   if mode==2 {yaw+=180.0; pitch=-pitch;}
+   [
+     botw_feet[0]+(eye[0]-m.pos[0]),
+     botw_feet[1]+(eye[1]-m.pos[1]),
+     botw_feet[2]+(eye[2]-m.pos[2]),
+   ]
+ }else {
+   let h=if (0.05..=64.0).contains(&m.eye){m.eye as f64}else{1.72};
+   [botw_feet[0],botw_feet[1]+h,botw_feet[2]]
+ };
+ let (sy,cy)=yaw.to_radians().sin_cos();
+ let (sp,cp)=pitch.to_radians().sin_cos();
+ let forward=[-sy*cp,-sp,cy*cp];
+ (camera,forward,yaw,pitch)
 }
 fn finite(v:f64)->bool{v.is_finite() && v.abs()<100000.0}
 
@@ -43,10 +71,25 @@ impl Engine{
    let eye=self.mem.f32(MC+40);
    let fov=self.mem.f32(MC+64); // McState FOV relative offset 0x40
    let frame=self.mem.u64(MC+56);
+   let camera=if flags&CAM_VALID!=0 {
+     let eye=[
+       self.mem.f64(MC+0x50),
+       self.mem.f64(MC+0x58),
+       self.mem.f64(MC+0x60),
+     ];
+     let mode=self.mem.u32(MC+0xC0);
+     // Reject broken/stale/out-of-range camera telemetry rather than
+     // snapping Zelda to a bogus position. Minecraft's normal F5 <= 12m.
+     let dist2=(0..3).map(|i|(eye[i]-pos[i]).powi(2)).sum::<f64>();
+     if mode<=2 && eye.iter().all(|v|finite(*v)) &&
+          dist2.is_finite() && dist2<=1024.0 {
+       Some((eye,mode))
+     }else {None}
+   }else {None};
    if seq==self.mem.u32(MC) && frame!=0
       && pos.iter().all(|x|finite(*x)) && finite(yaw as f64)
       && finite(pitch as f64) && finite(eye as f64) && finite(fov as f64){
-    return Some(McPose{frame,pos,yaw,pitch,flags,eye,fov});
+    return Some(McPose{frame,pos,yaw,pitch,flags,eye,fov,camera});
    }
   }
   None
@@ -108,19 +151,11 @@ impl Engine{
      else if let (Some(ma),Some(ga))=(self.mc_anchor,self.botw_anchor){
       self.last_mc=Some(m);
       let pos=[ga[0]+m.pos[0]-ma[0],ga[1]+m.pos[1]-ma[1],ga[2]+m.pos[2]-ma[2]];
-      let y=(m.yaw as f64).to_radians();
-      let p=(m.pitch as f64).to_radians();
-      let forward=[-y.sin()*p.cos(),-p.sin(),y.cos()*p.cos()];
-      // Minecraft sends the actual eye height, already adjusted by the
-      // vanilla minecraft:scale attribute and the current pose. No hard-coded
-      // adult-sized range: scaled players can be much shorter or taller.
-      let eye_height=if (0.05..=64.0).contains(&m.eye){m.eye as f64}else{1.72};
-      // Preserve the previous ~1.79m standing camera while letting the
-      // extra height scale with the player's dimensions. At vanilla 1.62m
-      // eye height this matches the old 1.72+0.07 result.
-      let eye=[pos[0],pos[1]+eye_height*(1.79/1.62),pos[2]];
+      let (eye,forward,render_yaw,render_pitch)=view_for(m,pos);
+      // The player stays at the same feet position. ONLY Zelda's real
+      // render camera follows Minecraft's camera in F5 and first person.
       let vals=[pos[0],pos[1],pos[2],eye[0],eye[1],eye[2],
-        forward[0],forward[1],forward[2],m.yaw as f64,m.pitch as f64,
+        forward[0],forward[1],forward[2],render_yaw,render_pitch,
         ma[0],ma[1],ma[2],ga[0],ga[1],ga[2],
         if (30.0..=130.0).contains(&m.fov){m.fov as f64}else{70.0}]; // Pose.reserved FOV
       if vals.iter().all(|v|finite(*v)){
@@ -192,5 +227,35 @@ impl Engine{
   if s&1!=0||s!=self.mem.u32(MC){return json!({"error":"Minecraft state being updated"})}
   json!({"seq":s,"flags":flags,"in_world":flags&ACTIVE!=0,
          "x":x,"y":y,"z":z,"yaw":yaw,"pitch":pitch,"frame":frame})
+ }
+}
+#[cfg(test)]
+mod camera_math_tests {
+ use super::*;
+ fn pose(camera:Option<([f64;3],u32)>)->McPose{
+   McPose{frame:1,pos:[10.,20.,30.],yaw:90.,pitch:30.,
+     flags:ACTIVE|INPUTS|CAM_VALID,eye:1.62,fov:70.,camera}
+ }
+ fn near(a:f64,b:f64){assert!((a-b).abs()<1e-6,"{a} != {b}");}
+ #[test]fn actual_first_person_eye_not_scaled(){
+  let (eye,_,_,_)=view_for(pose(Some(([10.,21.62,30.],0))),[100.,200.,300.]);
+  assert_eq!(eye,[100.,201.62,300.]);
+ }
+ #[test]fn f5_rear_preserves_actual_camera_offset(){
+  let (eye,forward,yaw,pitch)=view_for(
+    pose(Some(([13.46,23.62,30.],1))),[100.,200.,300.]);
+  near(eye[0],103.46);near(eye[1],203.62);near(eye[2],300.);
+  near(yaw,90.);near(pitch,30.);
+  assert!(forward[0] < -0.8);
+ }
+ #[test]fn f5_front_reverses_yaw_and_pitch_like_skycraft(){
+  let (_,forward,yaw,pitch)=view_for(
+    pose(Some(([6.54,23.62,30.],2))),[100.,200.,300.]);
+  near(yaw,270.);near(pitch,-30.);
+  assert!(forward[0]>0.8);
+ }
+ #[test]fn missing_camera_telemetry_falls_back_safely(){
+  let (eye,_,_,_)=view_for(pose(None),[100.,200.,300.]);
+  near(eye[0],100.);near(eye[1],201.62);near(eye[2],300.);
  }
 }
