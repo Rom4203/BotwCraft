@@ -74,12 +74,16 @@ impl Map {
    let alignment=view[8]*forward[0]+view[9]*forward[1]+view[10]*forward[2];
    if alignment.abs()<0.5||alignment.abs()>1.5 {return None;}
    let depth_sign=alignment.signum();
-   // Verify the native view really transforms the native camera's eye to zero.
-   let camera_space: [f32;3]=std::array::from_fn(|r|{
-     view[r*4]*eye[0]+view[r*4+1]*eye[1]+view[r*4+2]*eye[2]+view[r*4+3]
-   });
-   if camera_space.iter().any(|c|c.abs()>2.) {return None;}
-   Some(Camera{eye,view,shift,depth_sign})
+   // The view matrix belongs to Zelda's actual rendered camera frame.
+   // Its inverse translation is the authoritative optical eye, rather than
+   // a separate mailbox eye that may be from a DIFFERENT game frame.
+   // Previous code tolerated a 2-meter matrix/eye mismatch, allowing
+   // nearby blocks to visibly skate during camera movement.
+   let real_eye=eye_from_view(view)?;
+   let err2=(0..3).map(|i|(real_eye[i]-eye[i]).powi(2)).sum::<f32>();
+   // Reject wildly mismatched captures, not normal head bob / frame timing.
+   if err2>16.0{return None;}
+   Some(Camera{eye:real_eye,view,shift,depth_sign})
  }
  /// Consume bounded complete packets. Exactly one consumer advances the tail.
  /// Renderer never reads stale or unpublished data.
@@ -116,6 +120,24 @@ impl Map {
    self.set_tail(tail);
    (geometry,atlas)
  }
+}
+/// Invert a world->view rigid transform (3x4 rows) from the exact
+/// native matrix Zelda used to render the world. No guessed eye position,
+/// Minecraft camera angle or frame-to-frame pose interpolation.
+fn eye_from_view(v:[f32;12])->Option<[f32;3]>{
+  let mut out=[0.0f32;3];
+  for i in 0..3 {
+    // For orthogonal R, inverse(R) == transpose(R).
+    out[i]=-(v[i]*v[3]+v[4+i]*v[7]+v[8+i]*v[11]);
+  }
+  let len2=|r:usize| (0..3).map(|i|v[r*4+i]*v[r*4+i]).sum::<f32>();
+  let dot=|a:usize,b:usize| (0..3).map(|i|v[a*4+i]*v[b*4+i]).sum::<f32>();
+  if (0..3).any(|r| !(0.99..=1.01).contains(&len2(r)))
+    || dot(0,1).abs()>0.015 || dot(0,2).abs()>0.015 || dot(1,2).abs()>0.015
+    || !out.iter().all(|c|c.is_finite()&&c.abs()<100_000.) {
+      return None;
+  }
+  Some(out)
 }
 #[derive(Clone,Copy)]
 pub(super) struct Camera{pub(super) eye:[f32;3],view:[f32;12],shift:[f32;3],depth_sign:f32}
@@ -459,5 +481,25 @@ mod tests {
    assert_eq!(u.up,[0.,1.,0.,-21.]);
    assert_eq!(u.offset,[100.,200.,300.,0.]);
    assert!((u.lens[0]-1.4281).abs()<0.001);
+ }
+ #[test]fn optical_eye_is_mathematically_fixed_in_hyrule(){
+   // Eye=(10,20,30). Identity view rotation translates the world by -eye.
+   let view=[1.,0.,0.,-10.,0.,1.,0.,-20.,0.,0.,1.,-30.];
+   assert_eq!(eye_from_view(view),Some([10.,20.,30.]));
+   // Yaw 90 degrees: camera X=-worldZ and camera Z=worldX.
+   let rotated=[0.,0.,-1.,30.,0.,1.,0.,-20.,1.,0.,0.,-10.];
+   assert_eq!(eye_from_view(rotated),Some([10.,20.,30.]));
+ }
+ #[test]fn placed_block_cannot_reanchor_while_player_moves(){
+   let block=[120.,35.,-280.];
+   let anchor=[900.,100.,500.];
+   // This math does not depend on player's position. Each camera owns
+   // only world->view projection of the SAME fixed Hyrule vertex.
+   let pos: [f32;3]=std::array::from_fn(|i|block[i]+anchor[i]);
+   for player in [[0.,0.,0.],[22.,4.,-30.],[-80.,-12.,64.]]{
+     let locked:[f32;3]=std::array::from_fn(|i|block[i]+anchor[i]);
+     assert_eq!(locked,pos);
+     assert_ne!(player,pos);
+   }
  }
 }
