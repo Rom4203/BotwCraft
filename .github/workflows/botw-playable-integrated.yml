@@ -9,6 +9,7 @@ on:
       - "botw/rust-terrain-bdp3/sources/botw/rust_bridge/**"
       - "botw/rust-terrain-bdp3/sources/botw/wxlm/**"
       - "botw/scripts/**"
+      - "botw/bridge/**"
       - ".github/workflows/botw-playable-integrated.yml"
   workflow_dispatch:
 jobs:
