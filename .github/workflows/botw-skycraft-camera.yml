@@ -1,7 +1,7 @@
 name: BotwCraft SkyCraft camera parity
 on:
   push:
-    branches: [botwcraft/skycraft-camera-match-20261013]
+    branches: [botwcraft/skycraft-camera-match-20261013, botwcraft/worldlocked-view-20261014]
     paths:
       - 'fabric/**'
       - 'botw/rust-terrain-bdp3/sources/botw/rust_bridge/**'
@@ -22,7 +22,7 @@ jobs:
         run: cargo build --release
       - uses: actions/upload-artifact@v4
         with:
-          name: BotwCraft-SkyCraft-Camera-Rust
+          name: BotwCraft-WorldLocked-Camera-Rust
           path: botw/rust-terrain-bdp3/sources/botw/rust_bridge/target/release/botwcraft-rust-bridge.exe
           if-no-files-found: error
   zelda-native-camera:
