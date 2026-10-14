@@ -15,7 +15,9 @@ def valid_tile(p:Path)->bool:
 
 def tiles(root:Path,kind='terrain'):
     d=root/kind
-    if d.is_symlink() or not d.is_dir():return []
+    try:
+        if d.is_symlink() or not d.is_dir():return []
+    except OSError:return []
     return sorted(p for p in d.glob('*.btri') if valid_tile(p))
 
 def ensure_cache(root:Path,search_parent:Path|None=None)->tuple[int,str]:
@@ -25,11 +27,15 @@ def ensure_cache(root:Path,search_parent:Path|None=None)->tuple[int,str]:
     parent=search_parent or root.parent
     if not parent.is_dir():return 0,'Dossier parent inaccessible'
     candidates=[]
-    for previous in parent.iterdir():
-        if not previous.is_dir() or previous.is_symlink() or previous.resolve()==root.resolve():continue
-        source=previous/'terrain_cache'
-        found=tiles(source)
-        if found:candidates.append((len(found),source))
+    # Scan only extracted BotwCraft directories. Never descend into system,
+    # arbitrary user folders, or symlinks.
+    for previous in parent.glob('BotwCraft*'):
+        try:
+            if not previous.is_dir() or previous.is_symlink() or previous.resolve()==root.resolve():continue
+            source=previous/'terrain_cache'
+            found=tiles(source)
+            if found:candidates.append((len(found),source))
+        except OSError:continue
     if not candidates:return 0,'Ancien cache introuvable : convertir le RomFS BOTW'
     _,source=max(candidates,key=lambda item:item[0])
     for kind in ('terrain','decor'):
