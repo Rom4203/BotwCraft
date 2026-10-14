@@ -1,7 +1,7 @@
 name: BotwCraft BTRI real Zelda geometry depth-test
 on:
   push:
-    branches: [botwcraft/btri-depth-occlusion-20261014]
+    branches: [botwcraft/btri-depth-occlusion-20261014, botwcraft/blocks-worldlocked-20261014]
     paths:
       - 'botw/integrated-compositor/**'
       - 'botw/rust-scene-relay/**'
@@ -27,6 +27,6 @@ jobs:
           if (-not (Test-Path botw/integrated-compositor/target/release/botwcraft-compositor.exe)) {exit 2}
       - uses: actions/upload-artifact@v4
         with:
-          name: BotwCraft-Minecraft-3D-Genuine-Zelda-BTRI-Depth
+          name: BotwCraft-WorldLocked-Zelda-3D-Blocks
           path: botw/integrated-compositor/target/release/botwcraft-compositor.exe
           if-no-files-found: error
