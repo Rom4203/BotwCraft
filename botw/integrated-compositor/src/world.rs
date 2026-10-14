@@ -157,6 +157,12 @@ impl Default for Snapshot{
 pub struct Layer {
  map:Option<Map>,scene:Scene,last_try:Instant,
  last_mesh_eye:Option<[f32;3]>,
+ // MC -> Hyrule is a fixed WORLD registration, never recalculated while
+ // the player turns their head or walks. Coordinates of placed blocks are
+ // owned by Minecraft sections, not the player's camera/hand.
+ locked_world_offset:Option<[f32;3]>,
+ last_valid_view:Option<Instant>,
+ last_origin_report:Instant,
  depth:TerrainDepth,
  frame:Arc<Mutex<Snapshot>>, pub id:egui::TextureId,
 }
@@ -167,6 +173,8 @@ impl Layer {
    let id=rs.renderer.write().register_native_texture(&rs.device,&gpu.color_view,wgpu::FilterMode::Linear);
    rs.renderer.write().callback_resources.insert(gpu);
    Self{map:None,scene:Scene::default(),last_mesh_eye:None,
+     locked_world_offset:None,last_valid_view:None,
+     last_origin_report:Instant::now()-Duration::from_secs(5),
      depth:TerrainDepth::new(),
      last_try:Instant::now()-Duration::from_secs(3),
      frame:Arc::new(Mutex::new(Snapshot::default())),id}
@@ -178,9 +186,36 @@ impl Layer {
    let mut snap=self.frame.lock().unwrap();
    let Some(map)=&self.map else {snap.cam=None;return;};
    if map.u32(0)!=MAGIC||map.u32(4)!=VERSION{
-     self.map=None;self.scene=Scene::default();self.last_mesh_eye=None;snap.cam=None;return;
+     self.map=None;self.scene=Scene::default();self.last_mesh_eye=None;
+     self.locked_world_offset=None;self.last_valid_view=None;
+     snap.cam=None;return;
    }
-   snap.cam=map.camera();
+   // The bridge sends its native camera matrix independently of the
+   // Minecraft section mesh ring. The registration of the two WORLDS must
+   // remain immutable for all placed blocks within a connected session.
+   // In earlier builds each incoming (possibly delayed) host pose carried
+   // a fresh shift, so whole chunks could appear to slide with the player.
+   let current=map.camera();
+   if let Some(mut cam)=current {
+     let locked=*self.locked_world_offset.get_or_insert(cam.shift);
+     let d2=(0..3).map(|i|(locked[i]-cam.shift[i]).powi(2)).sum::<f32>();
+     if d2>0.25 && self.last_origin_report.elapsed()>Duration::from_secs(5){
+        eprintln!("[BOTWCRAFT_WORLD_LOCK] Ignoring moving world origin: drift={:.2}m; placed blocks stay at their original Hyrule coordinates",d2.sqrt());
+        self.last_origin_report=Instant::now();
+     }
+     cam.shift=locked;
+     self.last_valid_view=Some(Instant::now());
+     snap.cam=Some(cam);
+   }else{
+     snap.cam=None;
+     if self.last_valid_view.is_some_and(|t|t.elapsed()>Duration::from_secs(5)){
+       // A disconnected/restarted Ryujinx world may legitimately have a
+       // new origin. Re-register once after the session actually stops.
+       self.locked_world_offset=None;
+       self.last_valid_view=None;
+       self.last_mesh_eye=None;
+     }
+   }
    self.depth.tick(snap.cam);
    if let Ok(frame)=self.depth.shared.try_lock(){
      if frame.revision!=snap.occlusion_rev {
