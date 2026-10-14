@@ -4,6 +4,8 @@ mod hud;
 mod viewport;
 #[cfg(target_os="windows")]
 mod world;
+#[cfg(target_os="windows")]
+mod terrain_depth;
 
 use capture::{FrameInbox, PixelFrame};
 use eframe::egui;
