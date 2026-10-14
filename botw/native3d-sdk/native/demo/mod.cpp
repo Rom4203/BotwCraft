@@ -13,7 +13,9 @@ namespace C {
 namespace Call { WXL_USE_wiixl_call(ResolveTarget); }
 namespace G { WXL_USE_botw_gfx(RegisterDraw); }
 namespace Player {
- WXL_USE_botw_player(GetPosition); WXL_USE_botw_player(SupportsPosition);
+ WXL_USE_botw_player(Init); WXL_USE_botw_player(RegisterTick);
+ WXL_USE_botw_player(GetPlayerActor); WXL_USE_botw_player(ActorIsValid);
+ WXL_USE_botw_player(ActorUnsafeRawPointer);
 }
 namespace {
 using FnTargets=void (*)(void*,int,const void* const*,const void*,const void*,const void*);
@@ -43,15 +45,24 @@ void observeTargets(void* cmd,int count,const void* const* colors,
  if(original)original(cmd,count,colors,cr,depth,dr);
 }
 void tick(){
- if(worldPositionCaptured||!Player::SupportsPosition||!Player::GetPosition||
-    !Player::SupportsPosition())return;
- float pos[3]={0,0,0};
- if(!Player::GetPosition(pos))return;
- // Actual Zelda XYZ at a one-meter fixed world-space cube's center.
- // This position is written EXACTLY ONCE: never anchored to camera thereafter.
- g_Bw3dProbe.modelPosition[0]=pos[0]+3.0f;
- g_Bw3dProbe.modelPosition[1]=pos[1]+1.0f;
- g_Bw3dProbe.modelPosition[2]=pos[2];
+ if(worldPositionCaptured || !Player::GetPlayerActor ||
+    !Player::ActorIsValid || !Player::ActorUnsafeRawPointer)return;
+ const uint32_t actor=Player::GetPlayerActor();
+ if(!actor || !Player::ActorIsValid(actor))return;
+ const uintptr_t ptr=Player::ActorUnsafeRawPointer(actor);
+ // NX150 Actor::mMtx from the working BotwCraft Switch 1.5.0 module:
+ // row-major Matrix34f at +0x398; xyz are elements 3,7,11.
+ if(ptr<0x10000u || (ptr&7u))return;
+ const volatile float* m=reinterpret_cast<const volatile float*>(ptr+0x398u);
+ const float x=m[3],y=m[7],z=m[11];
+ if(!__builtin_isfinite(x)||!__builtin_isfinite(y)||!__builtin_isfinite(z)||
+    x < -100000.f || x > 100000.f ||
+    y < -100000.f || y > 100000.f ||
+    z < -100000.f || z > 100000.f)return;
+ // Actual Zelda XYZ, initialized ONCE from Link, never camera-relative.
+ g_Bw3dProbe.modelPosition[0]=x+3.0f;
+ g_Bw3dProbe.modelPosition[1]=y+1.0f;
+ g_Bw3dProbe.modelPosition[2]=z;
  g_Bw3dProbe.modelReady=1;
  worldPositionCaptured=true;
  if(C::Log)C::Log("[BW3D] Cube position fixed in Hyrule XYZ; waiting for native projection and world depth");
@@ -81,6 +92,7 @@ extern "C" __attribute__((used)) void WiiXLaunch_ModEntry(){
  if(!C::Log)return;
  C::Log("[BW3D] Native 3D API probe: independent of BotwCraft");
  install();
- if(C::RegisterTick)C::RegisterTick(&tick);
+ if(Player::Init)Player::Init();
+ if(Player::RegisterTick)Player::RegisterTick(&tick);
  if(G::RegisterDraw)G::RegisterDraw(&draw);
 }
