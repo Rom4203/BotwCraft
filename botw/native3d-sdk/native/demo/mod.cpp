@@ -26,10 +26,40 @@ struct alignas(16) State {
  volatile uint32_t drawnFrames=0,modelReady=0;
  volatile uintptr_t depth=0,color=0,cmd=0;
  volatile float modelPosition[3]={0.f,0.f,0.f};
+ struct Candidate {volatile uintptr_t depth=0,color=0;volatile uint32_t hits=0;};
+ Candidate candidates[16]{};
 };
 extern "C" __attribute__((used,aligned(16))) State g_Bw3dProbe{};
 FnTargets original=nullptr;
 bool worldPositionCaptured=false;
+void emitNumber(char*&out,uint32_t n){
+ char reverse[12]{};unsigned i=0;
+ do{reverse[i++]=char('0'+n%10u);n/=10u;}while(n && i<12);
+ while(i)*out++=reverse[--i];
+}
+void emitHex(char*&out,uintptr_t n){
+ *out++='0';*out++='x';
+ for(int i=sizeof(uintptr_t)*8-4;i>=0;i-=4)
+  *out++="0123456789abcdef"[(n>>i)&15u];
+}
+void logDepthStats(){
+ if(!C::Log)return;
+ char line[220]{};char* cursor=line;
+ const auto put=[&cursor](const char* text){while(*text)*cursor++=*text++;};
+ auto& s=g_Bw3dProbe;
+ put("[BW3D] NVN calls=");emitNumber(cursor,s.calls);
+ put(" realDepth=");emitNumber(cursor,s.withDepth);
+ put(" color+depth=");emitNumber(cursor,s.withColorAndDepth);
+ const State::Candidate* best=nullptr;
+ for(const auto& candidate:s.candidates)
+   if(candidate.depth && (!best || candidate.hits>best->hits))best=&candidate;
+ if(best){
+  put(" commonDepth=");emitHex(cursor,best->depth);
+  put(" count=");emitNumber(cursor,best->hits);
+ }
+ *cursor=0;
+ C::Log(line);
+}
 void observeTargets(void* cmd,int count,const void* const* colors,
                     const void* cr,const void* depth,const void* dr) {
  ++g_Bw3dProbe.calls;
@@ -41,6 +71,15 @@ void observeTargets(void* cmd,int count,const void* const* colors,
  if(depth && count>0 && colors && colors[0]) {
   ++g_Bw3dProbe.withColorAndDepth;
   g_Bw3dProbe.color=reinterpret_cast<uintptr_t>(colors[0]);
+  const uintptr_t key=reinterpret_cast<uintptr_t>(depth);
+  auto* slot=&g_Bw3dProbe.candidates[0];
+  for(auto& candidate:g_Bw3dProbe.candidates){
+    if(candidate.depth==key){slot=&candidate;break;}
+    if(candidate.depth==0){slot=&candidate;break;}
+    if(candidate.hits<slot->hits)slot=&candidate;
+  }
+  slot->depth=key;slot->color=reinterpret_cast<uintptr_t>(colors[0]);
+  ++slot->hits;
  }
  if(original)original(cmd,count,colors,cr,depth,dr);
 }
@@ -69,9 +108,7 @@ void tick(){
 }
 void draw(uintptr_t,uintptr_t,int32_t,int32_t){
  const unsigned n=++g_Bw3dProbe.drawnFrames;
- if(n==120 || n==600){
-  if(C::Log) C::Log("[BW3D] NVN drawing active; checking GAME depth binds, no overlay or fake projection");
- }
+ if(n==120 || (n>120 && n%240==0))logDepthStats();
 }
 void install(){
  if(!C::InstallHook||!Call::ResolveTarget)return;
