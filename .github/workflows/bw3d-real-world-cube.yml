@@ -1,0 +1,22 @@
+name: BW3D Real Hyrule Physics Cube Map Unit Tests
+on:
+  push:
+    branches: [botwcraft/native3d-sdk-20261014]
+    paths:
+      - 'botw/native3d-sdk/world_object_test/**'
+      - '.github/workflows/bw3d-real-world-cube.yml'
+  workflow_dispatch:
+jobs:
+  native-actor:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install BYML/Yaz0 serializer for Switch 1.5.0
+        run: python -m pip install oead
+      - name: Test real Hyrule XYZ, actor ID, map compression and preservation
+        working-directory: botw/native3d-sdk/world_object_test
+        run: python -m unittest -v test_place_box.py
