@@ -143,9 +143,9 @@ def build(romfs,xyz,out,kind="wood",map_file=None):
     binary=bytes(oead.byml.to_binary(root,big_endian=False,version=version))
     # Re-read BEFORE touching the output. Check all original actors remained.
     check=oead.byml.from_binary(binary)
-    if len(check["Objs"])!=count or sum(
-      int(a["HashId"])==hash_id for a in check["Objs"])!=1:
-        raise RuntimeError("Invalid BYML roundtrip. No file emitted.")
+    matches=sum(int(entry["HashId"])==hash_id for entry in check["Objs"])
+    if len(check["Objs"])!=count or matches!=1:
+        raise RuntimeError(f"Invalid BYML roundtrip: got {len(check['Objs'])} actors, expected {count}; matches={matches}, expected 1. No file emitted.")
     data=bytes(oead.yaz0.compress(binary,data_alignment=alignment)) if compressed else binary
     relative=file.relative_to(romfs)
     dst=out/"romfs"/relative
