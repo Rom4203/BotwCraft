@@ -292,7 +292,7 @@ pub fn transport_loop(state:Arc<Mutex<Engine>>){
     }
     // Zelda optical VIEW captured AFTER sead::LookAtCamera::doUpdateMatrix.
     // Use the EXISTING GDB connection: never start another debugger client.
-    if armed && authenticated && last_optical_read.elapsed()>=Duration::from_millis(40) {
+    if armed && authenticated && last_optical_read.elapsed()>=Duration::from_millis(10) {
       if let Ok(view)=remote.read(addr+4084,84){
         let magic=u32::from_le_bytes(view[0..4].try_into().unwrap());
         let seq=u32::from_le_bytes(view[4..8].try_into().unwrap());
