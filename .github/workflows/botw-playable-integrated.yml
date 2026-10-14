@@ -35,6 +35,14 @@ jobs:
           name: BotwCraft-Playable-Fabric
           path: fabric/build/libs/skycraft-0.1.2.jar
           if-no-files-found: error
+  collision-cache:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Preserve real Zelda collisions across a new installation
+        working-directory: botw/bridge
+        run: python3 -m unittest -v test_collision_cache_guard.py
   native-bridge:
     runs-on: windows-latest
     timeout-minutes: 35
