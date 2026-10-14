@@ -185,6 +185,8 @@ pub struct Layer {
  locked_world_offset:Option<[f32;3]>,
  last_valid_view:Option<Instant>,
  last_origin_report:Instant,
+ last_video_stamp_ms:Option<u64>,
+ video_camera:Option<Camera>,
  depth:TerrainDepth,
  frame:Arc<Mutex<Snapshot>>, pub id:egui::TextureId,
 }
@@ -197,11 +199,12 @@ impl Layer {
    Self{map:None,scene:Scene::default(),last_mesh_eye:None,
      locked_world_offset:None,last_valid_view:None,
      last_origin_report:Instant::now()-Duration::from_secs(5),
+     last_video_stamp_ms:None,video_camera:None,
      depth:TerrainDepth::new(),
      last_try:Instant::now()-Duration::from_secs(3),
      frame:Arc::new(Mutex::new(Snapshot::default())),id}
  }
- pub fn tick(&mut self){
+ pub fn tick(&mut self,video_stamp_ms:Option<u64>){
    if self.map.is_none()&&self.last_try.elapsed()>=Duration::from_secs(1){
      self.last_try=Instant::now();self.map=Map::open();
    }
@@ -210,6 +213,7 @@ impl Layer {
    if map.u32(0)!=MAGIC||map.u32(4)!=VERSION{
      self.map=None;self.scene=Scene::default();self.last_mesh_eye=None;
      self.locked_world_offset=None;self.last_valid_view=None;
+     self.last_video_stamp_ms=None;self.video_camera=None;
      snap.cam=None;return;
    }
    // The bridge sends its native camera matrix independently of the
@@ -217,7 +221,13 @@ impl Layer {
    // remain immutable for all placed blocks within a connected session.
    // In earlier builds each incoming (possibly delayed) host pose carried
    // a fresh shift, so whole chunks could appear to slide with the player.
-   let current=map.camera();
+   // A world camera must never advance while Zelda's displayed pixels are
+   // still from the previous capture. This was the primary cause of cubes
+   // appearing to skate during rapid camera movement or Ryujinx FPS drops.
+   // No fresh video frame -> keep the previous Zelda view EXACTLY.
+   let video_is_new=video_stamp_ms.is_some() && video_stamp_ms!=self.last_video_stamp_ms;
+   let current=if video_is_new {map.camera()}else{self.video_camera};
+   if video_is_new {self.last_video_stamp_ms=video_stamp_ms;}
    if let Some(mut cam)=current {
      let locked=*self.locked_world_offset.get_or_insert(cam.shift);
      let d2=(0..3).map(|i|(locked[i]-cam.shift[i]).powi(2)).sum::<f32>();
@@ -238,6 +248,7 @@ impl Layer {
        self.last_mesh_eye=None;
      }
    }
+   if video_is_new {self.video_camera=snap.cam;}
    self.depth.tick(snap.cam);
    if let Ok(frame)=self.depth.shared.try_lock(){
      if frame.revision!=snap.occlusion_rev {
@@ -473,6 +484,18 @@ impl Gpu {
 #[cfg(test)]
 mod tests {
  use super::*;
+ #[test]fn same_video_frame_cannot_advance_world_camera(){
+   // The captured Zelda frame is only updated by WGC, whereas the Minecraft
+   // UI and GPU compositor can tick many times on the same image.
+   let mut previous=None;
+   let frames=[Some(1000u64),Some(1000),Some(1000),Some(1016),Some(1016),None];
+   let mut advancements=0;
+   for now in frames {
+      let fresh=now.is_some() && now!=previous;
+      if fresh {previous=now;advancements+=1;}
+   }
+   assert_eq!(advancements,2);
+ }
  #[test]fn native_zeldaview_is_unaffected_by_minecraft_fov(){
    let cam=Camera{eye:[11.,21.,31.],view:[1.,0.,0.,-11.,0.,1.,0.,-21.,0.,0.,1.,-31.],
      shift:[100.,200.,300.],depth_sign:1.};
