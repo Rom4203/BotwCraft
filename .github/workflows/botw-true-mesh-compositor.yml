@@ -1,7 +1,7 @@
 name: BotwCraft in-window real Minecraft triangles
 on:
   push:
-    branches: [botwcraft/true-mesh-compositor-20261013, botwcraft/btri-depth-occlusion-20261014, botwcraft/blocks-worldlocked-20261014]
+    branches: [botwcraft/true-mesh-compositor-20261013, botwcraft/btri-depth-occlusion-20261014, botwcraft/blocks-worldlocked-20261014, botwcraft/playable-world-20261014]
     paths:
       - 'botw/integrated-compositor/**'
       - 'botw/rust-scene-relay/**'
@@ -27,6 +27,6 @@ jobs:
           if (-not (Test-Path botw/integrated-compositor/target/release/botwcraft-compositor.exe)) {exit 2}
       - uses: actions/upload-artifact@v4
         with:
-          name: BotwCraft-WorldLocked-Renderer-Windows
+          name: BotwCraft-Playable-Renderer-Zelda-Camera
           path: botw/integrated-compositor/target/release/botwcraft-compositor.exe
           if-no-files-found: error
