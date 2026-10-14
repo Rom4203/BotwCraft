@@ -1,0 +1,45 @@
+name: BotwCraft Minecraft 26.3 hand restored
+on:
+  push:
+    branches: [botwcraft/blocks-worldlocked-20261014]
+    paths:
+      - 'fabric/**'
+      - '.github/workflows/botw-worldlocked-fabric.yml'
+  workflow_dispatch:
+jobs:
+  minecraft-native-mod:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Build Minecraft mod with vanilla first-person hand
+        working-directory: fabric
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon --stacktrace build
+      - name: Verify no hand suppression mixin in packaged JAR
+        working-directory: fabric
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import glob,zipfile,json
+          files=[p for p in glob.glob('build/libs/*.jar') if 'sources' not in p and 'dev' not in p]
+          assert files, 'Fabric jar missing'
+          for path in files:
+              with zipfile.ZipFile(path) as z:
+                  client=json.loads(z.read('skycraft.client.mixins.json'))
+                  assert 'BotwNoHandsMixin' not in client['client'], 'Hand suppression still configured!'
+                  assert not any('BotwNoHandsMixin' in f for f in z.namelist()), 'Hand suppression bytecode present'
+                  assert 'WorldExporter' in ' '.join(z.namelist()), 'SkyCraft world block export missing'
+                  print('Verified:',path,'normal Minecraft hand preserved')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BotwCraft-Minecraft-26.3-Hands-Intact
+          path: fabric/build/libs/*jar
+          if-no-files-found: error
