@@ -20,6 +20,7 @@ struct BotwCraftApp {
     game_texture: Option<egui::TextureHandle>,
     hud_texture: Option<egui::TextureHandle>,
     game_size: (usize, usize),
+    video_stamp_ms: Option<u64>,
     hud_size: (usize, usize),
     last_reconnect: Instant,
     last_hud_upload: Instant,
@@ -156,6 +157,8 @@ impl eframe::App for BotwCraftApp {
         // queuing up two old pictures. Dropped frames are NEVER replayed.
         let last = self.latest_capture.lock().ok().and_then(|mut frame| frame.take());
         if let Some(last) = last {
+            // Only advance the Zelda camera with an actual NEW captured image.
+            self.video_stamp_ms = Some(last.captured_ms);
             self.game_size = (last.width, last.height);
             upload(ctx, &mut self.game_texture, last, "ryujinx-live-video");
         }
@@ -172,7 +175,7 @@ impl eframe::App for BotwCraftApp {
         }
 
         #[cfg(target_os="windows")]
-        self.world.tick();
+        self.world.tick(self.video_stamp_ms);
 
         if ctx.input(|i| i.key_pressed(egui::Key::F10)) { self.only_game=!self.only_game; }
         if ctx.input(|i| i.key_pressed(egui::Key::F7)) { self.crop_top=self.crop_top.saturating_sub(4); }
@@ -260,7 +263,7 @@ fn main() -> eframe::Result {
         Ok(Box::new(BotwCraftApp {
         latest_capture,hud_map:None,game_texture:None,hud_texture:None,
         world:world::Layer::new(cc),
-        game_size:(1280,720),hud_size:(0,0),
+        game_size:(1280,720),video_stamp_ms:None,hud_size:(0,0),
         last_reconnect:Instant::now()-Duration::from_secs(2),
         last_hud_upload:Instant::now()-Duration::from_secs(1),
         status:String::new(),last_view:None,last_pointer:None,
