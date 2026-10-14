@@ -4,6 +4,7 @@
 //! Zelda's native depth is not available here; depth handles MC against MC.
 use std::{ffi::c_void,mem,ptr, sync::{Arc,Mutex,atomic::{AtomicU64,Ordering}}, time::{Duration,Instant}};
 use eframe::{egui,egui_wgpu};
+use crate::terrain_depth::TerrainDepth;
 use wgpu::util::DeviceExt;
 use botwcraft_rust_scene_relay::{Scene,MAP_BYTES,MAGIC,VERSION,RENDER_RING,RING_DATA};
 
@@ -117,7 +118,7 @@ impl Map {
  }
 }
 #[derive(Clone,Copy)]
-struct Camera{eye:[f32;3],view:[f32;12],shift:[f32;3],depth_sign:f32}
+pub(super) struct Camera{pub(super) eye:[f32;3],view:[f32;12],shift:[f32;3],depth_sign:f32}
 #[repr(C)]
 #[derive(Clone,Copy,bytemuck::Pod,bytemuck::Zeroable)]
 struct GpuVertex{xyz:[f32;3],uv:[f32;2],tint:u32,light:u32,flags:u32}
@@ -146,14 +147,17 @@ struct Snapshot {
  cam:Option<Camera>,
  mesh:Arc<Vec<GpuVertex>>,mesh_rev:u64,
  atlas:Arc<Vec<u8>>,atlas_w:u32,atlas_h:u32,atlas_rev:u64,
+ occlusion:Arc<Vec<[f32;3]>>,occlusion_rev:u64,occlusion_tiles:usize,
 }
 impl Default for Snapshot{
  fn default()->Self{Self{cam:None,mesh:Arc::new(vec![]),mesh_rev:0,
-   atlas:Arc::new(vec![]),atlas_w:0,atlas_h:0,atlas_rev:0}}
+   atlas:Arc::new(vec![]),atlas_w:0,atlas_h:0,atlas_rev:0,
+   occlusion:Arc::new(vec![]),occlusion_rev:0,occlusion_tiles:0}}
 }
 pub struct Layer {
  map:Option<Map>,scene:Scene,last_try:Instant,
  last_mesh_eye:Option<[f32;3]>,
+ depth:TerrainDepth,
  frame:Arc<Mutex<Snapshot>>, pub id:egui::TextureId,
 }
 impl Layer {
@@ -163,6 +167,7 @@ impl Layer {
    let id=rs.renderer.write().register_native_texture(&rs.device,&gpu.color_view,wgpu::FilterMode::Linear);
    rs.renderer.write().callback_resources.insert(gpu);
    Self{map:None,scene:Scene::default(),last_mesh_eye:None,
+     depth:TerrainDepth::new(),
      last_try:Instant::now()-Duration::from_secs(3),
      frame:Arc::new(Mutex::new(Snapshot::default())),id}
  }
@@ -176,6 +181,13 @@ impl Layer {
      self.map=None;self.scene=Scene::default();self.last_mesh_eye=None;snap.cam=None;return;
    }
    snap.cam=map.camera();
+   self.depth.tick(snap.cam);
+   if let Ok(frame)=self.depth.shared.try_lock(){
+     if frame.revision!=snap.occlusion_rev {
+       snap.occlusion=frame.vertices.clone();snap.occlusion_rev=frame.revision;
+       snap.occlusion_tiles=frame.tiles;
+     }
+   }
    // No active MC camera -> don't render ghost blocks over the Zelda menu.
    let (mesh_changed,atlas_changed)=map.drain(&mut self.scene);
    // Rebuild when the native camera first appears OR crosses the 32-block
@@ -239,9 +251,11 @@ impl egui_wgpu::CallbackTrait for WorldCallback {
 }
 struct Gpu{
  color_view:wgpu::TextureView,depth_view:wgpu::TextureView,
- pipeline:wgpu::RenderPipeline,layout:wgpu::BindGroupLayout,
+ pipeline:wgpu::RenderPipeline,
+ occluder_pipeline:wgpu::RenderPipeline,layout:wgpu::BindGroupLayout,
  bind_group:wgpu::BindGroup,uniform:wgpu::Buffer,
  sampler:wgpu::Sampler,vertices:wgpu::Buffer,vertex_count:u32,mesh_rev:u64,atlas_rev:u64,
+ depth_vertices:wgpu::Buffer,depth_count:u32,depth_rev:u64,
 }
 impl Gpu {
  fn new(device:&wgpu::Device)->Self{
@@ -302,10 +316,34 @@ impl Gpu {
        targets:&[Some(wgpu::ColorTargetState{format:wgpu::TextureFormat::Rgba8UnormSrgb,
          blend:Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),write_mask:wgpu::ColorWrites::ALL})]}),
      multiview:None,cache:None});
+   // TRUE native Zelda collision geometry: write only depth, NOT pixels.
+   // This occludes Minecraft behind real terrain, rocks and buildings.
+   // It is a geometry-depth PROXY, not Ryujinx's original NVN depth target.
+   let occluder_pipeline=device.create_render_pipeline(&wgpu::RenderPipelineDescriptor{
+     label:Some("Zelda BTRI real terrain and static decor depth-only"),
+     layout:Some(&p_layout),
+     vertex:wgpu::VertexState{module:&shader,entry_point:Some("vs_zelda_depth"),
+       compilation_options:Default::default(),buffers:&[wgpu::VertexBufferLayout{
+         array_stride:12,step_mode:wgpu::VertexStepMode::Vertex,
+         attributes:&wgpu::vertex_attr_array![0=>Float32x3]}]},
+     primitive:wgpu::PrimitiveState{topology:wgpu::PrimitiveTopology::TriangleList,
+       cull_mode:None,..Default::default()},
+     depth_stencil:Some(wgpu::DepthStencilState{format:wgpu::TextureFormat::Depth24Plus,
+       depth_write_enabled:true,depth_compare:wgpu::CompareFunction::LessEqual,
+       stencil:Default::default(),bias:Default::default()}),
+     multisample:Default::default(),fragment:Some(wgpu::FragmentState{
+       module:&shader,entry_point:Some("fs_occluder"),compilation_options:Default::default(),
+       targets:&[Some(wgpu::ColorTargetState{format:wgpu::TextureFormat::Rgba8UnormSrgb,
+         blend:None,write_mask:wgpu::ColorWrites::empty()})]}),
+     multiview:None,cache:None});
+   let depth_vertices=device.create_buffer(&wgpu::BufferDescriptor{
+     label:Some("Empty native Zelda occluder"),
+     size:12,usage:wgpu::BufferUsages::VERTEX,mapped_at_creation:false});
    let vertices=device.create_buffer(&wgpu::BufferDescriptor{
      label:Some("Empty Minecraft mesh"),size:32,usage:wgpu::BufferUsages::VERTEX,mapped_at_creation:false});
-   Self{color_view,depth_view,pipeline,layout,bind_group,uniform,sampler,
-     vertices,vertex_count:0,mesh_rev:u64::MAX,atlas_rev:u64::MAX}
+   Self{color_view,depth_view,pipeline,occluder_pipeline,layout,bind_group,uniform,sampler,
+     vertices,vertex_count:0,mesh_rev:u64::MAX,atlas_rev:u64::MAX,
+     depth_vertices,depth_count:0,depth_rev:u64::MAX}
  }
  fn bind(device:&wgpu::Device,layout:&wgpu::BindGroupLayout,uniform:&wgpu::Buffer,sampler:&wgpu::Sampler,view:&wgpu::TextureView)->wgpu::BindGroup{
    device.create_bind_group(&wgpu::BindGroupDescriptor{label:Some("Minecraft atlas/camera"),
@@ -316,6 +354,16 @@ impl Gpu {
  }
  fn prepare(&mut self,device:&wgpu::Device,queue:&wgpu::Queue,
        encoder:&mut wgpu::CommandEncoder,snap:&Snapshot){
+   if snap.occlusion_rev!=self.depth_rev {
+     self.depth_rev=snap.occlusion_rev;
+     self.depth_count=snap.occlusion.len() as u32;
+     if !snap.occlusion.is_empty(){
+       self.depth_vertices=device.create_buffer_init(&wgpu::util::BufferInitDescriptor{
+         label:Some("Genuine BOTW terrain collision triangles depth-only"),
+         contents:bytemuck::cast_slice(snap.occlusion.as_slice()),
+         usage:wgpu::BufferUsages::VERTEX});
+     }
+   }
    if snap.mesh_rev!=self.mesh_rev {
      self.mesh_rev=snap.mesh_rev;self.vertex_count=snap.mesh.len() as u32;
      if !snap.mesh.is_empty(){
@@ -353,6 +401,12 @@ impl Gpu {
        depth_ops:Some(wgpu::Operations{load:wgpu::LoadOp::Clear(1.),store:wgpu::StoreOp::Store}),
        stencil_ops:None}),
      timestamp_writes:None,occlusion_query_set:None});
+   if snap.cam.is_some() && self.depth_count>0 && snap.occlusion_tiles>0 {
+     pass.set_pipeline(&self.occluder_pipeline);
+     pass.set_bind_group(0,&self.bind_group,&[]);
+     pass.set_vertex_buffer(0,self.depth_vertices.slice(..));
+     pass.draw(0..self.depth_count,0..1);
+   }
    if snap.cam.is_some() && self.vertex_count>0 && snap.atlas_w>0 {
      pass.set_pipeline(&self.pipeline);pass.set_bind_group(0,&self.bind_group,&[]);
      pass.set_vertex_buffer(0,self.vertices.slice(..));pass.draw(0..self.vertex_count,0..1);
