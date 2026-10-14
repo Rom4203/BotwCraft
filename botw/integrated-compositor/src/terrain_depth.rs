@@ -3,7 +3,7 @@
 //! no fabricated boxes, no pixels from a Minecraft screenshot. They were
 //! extracted from the user's OWN BOTW RomFS by the existing installers.
 //! CPU file IO never blocks the render thread.
-use std::{fs,io,mem,path::{Path,PathBuf},sync::{mpsc::{self,SyncSender},Arc,Mutex},thread};
+use std::{fs,io,path::{Path,PathBuf},sync::{mpsc::{self,SyncSender},Arc,Mutex},thread};
 use crate::world::Camera;
 
 const TILE_SIZE:f32=250.;
@@ -77,7 +77,7 @@ fn load_tile(path:&Path,gx:i32,gz:i32,eye:[f32;3],vertices:&mut Vec<[f32;3]>)->i
     for v in 0..3{for axis in 0..3{
        p[v][axis]=f32_at(triangle,(v*3+axis)*4)?;
     }}
-    if p.iter().any(|v|v[0]<-0.2||v[0]>250.2||v[2]<-0.2||v[2]>250.2){continue}
+    if p.iter().any(|v|v[0]< -0.2||v[0]>250.2||v[2]< -0.2||v[2]>250.2){continue}
     let min_x=p.iter().map(|v|v[0]+x0).fold(f32::INFINITY,f32::min);
     let max_x=p.iter().map(|v|v[0]+x0).fold(f32::NEG_INFINITY,f32::max);
     let min_z=p.iter().map(|v|v[2]+z0).fold(f32::INFINITY,f32::min);
