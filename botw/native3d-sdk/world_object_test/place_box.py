@@ -124,7 +124,7 @@ def make_object(root,x,y,z,actor,oead):
     })
     old.append(item)
     # Dynamic map unit search is indexed by HashId.
-    old.sort(key=lambda v:int(v["HashId"]))
+    root["Objs"] = oead.byml.Array(sorted(old,key=lambda v:int(v["HashId"])))
     return new_hash,len(old)
 
 def build(romfs,xyz,out,kind="wood",map_file=None):
