@@ -1,7 +1,7 @@
 name: BotwCraft one source branch complete playable build
 on:
   push:
-    branches: [botwcraft/playable-joined-20261014]
+    branches: [botwcraft/real-anchor-runtime-20261014]
     paths:
       - "fabric/**"
       - "botw/integrated-compositor/**"
