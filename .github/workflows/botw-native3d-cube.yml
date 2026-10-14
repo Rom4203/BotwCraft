@@ -1,0 +1,34 @@
+name: BW3D Native Cube Visible in Zelda
+on:
+  push:
+    branches: [botwcraft/native3d-sdk-20261014]
+    paths:
+      - 'botw/native3d-sdk/native/cube_demo/**'
+      - 'botw/native3d-sdk/tests/cube_demo.cpp'
+      - '.github/workflows/botw-native3d-cube.yml'
+  workflow_dispatch:
+jobs:
+  geometry:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test 3D cube triangles and perspective
+        run: |
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror -o /tmp/bw3d_test botw/native3d-sdk/tests/cube_demo.cpp
+          /tmp/bw3d_test
+  switch:
+    runs-on: ubuntu-latest
+    container: devkitpro/devkita64:latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch WiiXLaunch SDK
+        run: git clone --depth=1 https://github.com/BladesawStudios/WiiXLaunch.git vendor/WiiXLaunch
+      - name: Compile native Zelda 1.5.0 NVN cube
+        run: |
+          python3 vendor/WiiXLaunch/sdk/scripts/build_mod.py --source botw/native3d-sdk/native/cube_demo --target switch --wiixlaunch vendor/WiiXLaunch/sdk --out build-cube
+          test -s build-cube/switch-mods/bw3d_cube_demo.wxlm
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BW3D-Cube-3D-Native-Zelda
+          path: build-cube/switch-mods/bw3d_cube_demo.wxlm
+          if-no-files-found: error
