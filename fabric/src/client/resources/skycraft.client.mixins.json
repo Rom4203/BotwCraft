@@ -23,8 +23,7 @@
     "TextureManagerAccessor",
     "WaitingForPlayerChunkMixin",
     "WindowMixin",
-    "WorldOpenFlowsMixin",
-    "BotwNoHandsMixin"
+    "WorldOpenFlowsMixin"
   ],
   "injectors": {
     "defaultRequire": 1
